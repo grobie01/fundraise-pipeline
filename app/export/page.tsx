@@ -8,9 +8,23 @@ interface AttioList {
   slug: string;
 }
 
+interface AttioAttribute {
+  id: string;
+  title: string;
+  slug: string;
+  type: string;
+}
+
+interface AttioColumnMapping {
+  attioSlug: string;
+  attioTitle: string;
+  appColumn: string | null;
+  sampleValues: string[];
+}
+
 // Column mapping configuration for CSV import
 const COLUMN_CONFIG = [
-  { key: 'name', label: 'Investor Name', aliases: ['investor', 'firm', 'vc', 'fund', 'company', 'firm name', 'fund name', 'vc name'] },
+  { key: 'name', label: 'Investor Name', aliases: ['investor', 'firm', 'vc', 'fund', 'company', 'firm name', 'fund name', 'vc name', 'record'] },
   { key: 'status', label: 'Status', aliases: ['stage', 'pipeline', 'progress'] },
   { key: 'fit', label: 'Fit (1-5)', aliases: ['rating', 'score', 'priority', 'tier'] },
   { key: 'fundSize', label: 'Fund Size', aliases: ['fund size', 'aum', 'assets', 'capital'] },
@@ -30,6 +44,7 @@ interface CsvRow {
 interface ColumnMapping {
   csvColumn: string;
   appColumn: string | null;
+  sampleValues: string[];
 }
 
 export default function ExportPage() {
@@ -49,6 +64,12 @@ export default function ExportPage() {
   const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Attio mapping state
+  const [attioAttributes, setAttioAttributes] = useState<AttioAttribute[]>([]);
+  const [attioColumnMappings, setAttioColumnMappings] = useState<AttioColumnMapping[]>([]);
+  const [attioImportStatus, setAttioImportStatus] = useState<'idle' | 'loading' | 'mapping' | 'importing' | 'success' | 'error'>('idle');
+  const [attioEntryCount, setAttioEntryCount] = useState<number | null>(null);
+
   // Fetch Attio lists on mount
   useEffect(() => {
     async function fetchLists() {
@@ -66,40 +87,6 @@ export default function ExportPage() {
     }
     fetchLists();
   }, []);
-
-  const handleExport = async () => {
-    if (!selectedListId) {
-      setError('Please select an Attio list');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setResult(null);
-
-    try {
-      const response = await fetch('/api/attio/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          attioListId: selectedListId,
-          listName: listName || lists.find(l => l.id === selectedListId)?.name || 'Imported Pipeline',
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setResult({ url: data.url, investorCount: data.investorCount });
-      } else {
-        const data = await response.json();
-        setError(data.error || 'Export failed');
-      }
-    } catch (err) {
-      setError('Failed to export. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleCreateManual = async () => {
     if (!listName.trim()) {
@@ -193,9 +180,23 @@ export default function ExportPage() {
       setCsvColumns(columns);
       setCsvData(rows);
 
+      // Extract sample values (first 3 non-empty values for each column)
+      const getSampleValues = (columnName: string): string[] => {
+        const samples: string[] = [];
+        for (const row of rows) {
+          const val = row[columnName]?.trim();
+          if (val && !samples.includes(val)) {
+            samples.push(val);
+            if (samples.length >= 3) break;
+          }
+        }
+        return samples;
+      };
+
       const mappings: ColumnMapping[] = columns.map(col => ({
         csvColumn: col,
         appColumn: findBestMatch(col),
+        sampleValues: getSampleValues(col),
       }));
       setColumnMappings(mappings);
       setImportStatus('idle');
@@ -318,8 +319,172 @@ export default function ExportPage() {
     setImportStatus('idle');
   };
 
+  // Attio Import Functions
+  const fuzzyMatchAttio = (attioTitle: string, appCol: { key: string; label: string; aliases: string[] }): number => {
+    const normalizedAttio = attioTitle.toLowerCase().trim();
+    const normalizedKey = appCol.key.toLowerCase();
+    const normalizedLabel = appCol.label.toLowerCase();
+
+    if (normalizedAttio === normalizedKey || normalizedAttio === normalizedLabel) return 100;
+    if (appCol.aliases.some(a => normalizedAttio === a.toLowerCase())) return 95;
+    if (normalizedAttio.includes(normalizedKey) || normalizedKey.includes(normalizedAttio)) return 80;
+    if (normalizedAttio.includes(normalizedLabel) || normalizedLabel.includes(normalizedAttio)) return 75;
+    if (appCol.aliases.some(a => normalizedAttio.includes(a.toLowerCase()) || a.toLowerCase().includes(normalizedAttio))) return 70;
+    return 0;
+  };
+
+  const findBestMatchAttio = (attioTitle: string): string | null => {
+    let bestMatch: string | null = null;
+    let bestScore = 0;
+
+    for (const config of COLUMN_CONFIG) {
+      const score = fuzzyMatchAttio(attioTitle, config);
+      if (score > bestScore && score >= 70) {
+        bestScore = score;
+        bestMatch = config.key;
+      }
+    }
+    return bestMatch;
+  };
+
+  const handleAttioListSelect = async (listId: string) => {
+    setSelectedListId(listId);
+    setAttioImportStatus('idle');
+    setAttioAttributes([]);
+    setAttioColumnMappings([]);
+    setAttioEntryCount(null);
+    setError('');
+
+    if (!listId) return;
+
+    setAttioImportStatus('loading');
+
+    try {
+      // Fetch attributes and entry count in parallel
+      const [attrResponse, entriesResponse] = await Promise.all([
+        fetch(`/api/attio/lists/${listId}/attributes`),
+        fetch(`/api/attio/lists/${listId}/entries`),
+      ]);
+
+      if (!attrResponse.ok) {
+        throw new Error('Failed to fetch Attio list attributes');
+      }
+
+      const attrData = await attrResponse.json();
+      const attributes: AttioAttribute[] = attrData.attributes || [];
+      setAttioAttributes(attributes);
+
+      // Get entry count and sample values
+      let samples: Record<string, string[]> = {};
+      if (entriesResponse.ok) {
+        const entriesData = await entriesResponse.json();
+        setAttioEntryCount(entriesData.count || 0);
+        samples = entriesData.samples || {};
+      }
+
+      // Create mappings with fuzzy matching and sample values
+      const mappings: AttioColumnMapping[] = attributes.map(attr => ({
+        attioSlug: attr.slug,
+        attioTitle: attr.title,
+        appColumn: findBestMatchAttio(attr.title),
+        sampleValues: samples[attr.slug] || [],
+      }));
+      setAttioColumnMappings(mappings);
+
+      setAttioImportStatus('mapping');
+    } catch (err) {
+      console.error('Error fetching Attio attributes:', err);
+      setError('Failed to fetch Attio list structure');
+      setAttioImportStatus('error');
+    }
+  };
+
+  const updateAttioMapping = (attioSlug: string, appColumn: string | null) => {
+    setAttioColumnMappings(prev =>
+      prev.map(m => (m.attioSlug === attioSlug ? { ...m, appColumn } : m))
+    );
+  };
+
+  const executeAttioImport = async () => {
+    if (!listName.trim()) {
+      setError('Please enter a pipeline name');
+      return;
+    }
+
+    setAttioImportStatus('importing');
+    setError('');
+
+    try {
+      // Build field mapping from user selections
+      const fieldMapping: Record<string, string | null> = {
+        name: null,
+        status: null,
+        nextSteps: null,
+        notes: null,
+        amount: null,
+        primaryContact: null,
+        firmContact: null,
+        fit: null,
+        fundSize: null,
+      };
+
+      attioColumnMappings.forEach(mapping => {
+        if (mapping.appColumn) {
+          fieldMapping[mapping.appColumn] = mapping.attioSlug;
+        }
+      });
+
+      const response = await fetch('/api/attio/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          attioListId: selectedListId,
+          listName: listName || lists.find(l => l.id === selectedListId)?.name || 'Imported Pipeline',
+          fieldMapping,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setResult({ url: data.url, investorCount: data.investorCount });
+        setAttioImportStatus('success');
+
+        // Reset Attio state after a delay
+        setTimeout(() => {
+          setSelectedListId('');
+          setAttioAttributes([]);
+          setAttioColumnMappings([]);
+          setAttioImportStatus('idle');
+          setAttioEntryCount(null);
+        }, 1500);
+      } else {
+        const data = await response.json();
+        setError(data.error || 'Export failed');
+        setAttioImportStatus('error');
+      }
+    } catch (err) {
+      console.error('Attio import failed:', err);
+      setAttioImportStatus('error');
+      setError('Failed to import from Attio. Please try again.');
+    }
+  };
+
+  const resetAttioImport = () => {
+    setSelectedListId('');
+    setAttioAttributes([]);
+    setAttioColumnMappings([]);
+    setAttioImportStatus('idle');
+    setAttioEntryCount(null);
+  };
+
   return (
     <div style={styles.container}>
+      <style>{`
+        .tooltip-wrapper:hover .tooltip {
+          opacity: 1 !important;
+          visibility: visible !important;
+        }
+      `}</style>
       <div style={styles.card}>
         <div style={styles.logoMark}></div>
         <h1 style={styles.title}>Create Pipeline</h1>
@@ -366,7 +531,26 @@ export default function ExportPage() {
               <div style={styles.mappingList}>
                 {columnMappings.map((mapping) => (
                   <div key={mapping.csvColumn} style={styles.mappingRow}>
-                    <div style={styles.csvColumnName}>{mapping.csvColumn}</div>
+                    <div style={styles.tooltipWrapper} className="tooltip-wrapper">
+                      <div style={styles.csvColumnName}>
+                        {mapping.csvColumn}
+                        {mapping.sampleValues.length > 0 && (
+                          <span style={styles.samplePreview}>
+                            {mapping.sampleValues[0].length > 20
+                              ? mapping.sampleValues[0].substring(0, 20) + '...'
+                              : mapping.sampleValues[0]}
+                          </span>
+                        )}
+                      </div>
+                      {mapping.sampleValues.length > 0 && (
+                        <div style={styles.tooltip} className="tooltip">
+                          <div style={styles.tooltipLabel}>Examples:</div>
+                          {mapping.sampleValues.map((val, i) => (
+                            <div key={i} style={styles.tooltipValue}>{val}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     <div style={styles.mappingArrow}>→</div>
                     <select
                       style={styles.mappingSelect}
@@ -434,41 +618,111 @@ export default function ExportPage() {
           {fetchingLists ? (
             <p style={styles.loadingText}>Loading Attio lists...</p>
           ) : lists.length > 0 ? (
-            <>
-              <label style={styles.label}>Select Attio List</label>
-              <select
-                style={styles.select}
-                value={selectedListId}
-                onChange={(e) => setSelectedListId(e.target.value)}
-              >
-                <option value="">Choose a list...</option>
-                {lists.map((list) => (
-                  <option key={list.id} value={list.id}>
-                    {list.name}
-                  </option>
-                ))}
-              </select>
+            attioImportStatus === 'mapping' || attioImportStatus === 'importing' || attioImportStatus === 'success' ? (
+              // Mapping UI
+              <div style={styles.mappingContainer}>
+                <p style={styles.mappingInfo}>
+                  {attioEntryCount !== null && `Found ${attioEntryCount} entries with ${attioAttributes.length} columns.`}
+                </p>
 
-              <label style={styles.label}>Pipeline Name (optional)</label>
-              <input
-                style={styles.input}
-                type="text"
-                placeholder="e.g., Acme Corp Series A"
-                value={listName}
-                onChange={(e) => setListName(e.target.value)}
-              />
+                <div style={styles.mappingList}>
+                  {attioColumnMappings.map((mapping) => (
+                    <div key={mapping.attioSlug} style={styles.mappingRow}>
+                      <div style={styles.tooltipWrapper} className="tooltip-wrapper">
+                        <div style={styles.csvColumnName}>
+                          {mapping.attioTitle}
+                          {mapping.sampleValues.length > 0 && (
+                            <span style={styles.samplePreview}>
+                              {mapping.sampleValues[0].length > 20
+                                ? mapping.sampleValues[0].substring(0, 20) + '...'
+                                : mapping.sampleValues[0]}
+                            </span>
+                          )}
+                        </div>
+                        {mapping.sampleValues.length > 0 && (
+                          <div style={styles.tooltip} className="tooltip">
+                            <div style={styles.tooltipLabel}>Examples:</div>
+                            {mapping.sampleValues.map((val, i) => (
+                              <div key={i} style={styles.tooltipValue}>{val}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div style={styles.mappingArrow}>→</div>
+                      <select
+                        style={styles.mappingSelect}
+                        value={mapping.appColumn || ''}
+                        onChange={(e) => updateAttioMapping(mapping.attioSlug, e.target.value || null)}
+                      >
+                        <option value="">Don&apos;t import</option>
+                        {COLUMN_CONFIG.map((col) => (
+                          <option key={col.key} value={col.key}>
+                            {col.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
 
-              <button
-                style={{
-                  ...styles.button,
-                  opacity: loading || !selectedListId ? 0.5 : 1,
-                }}
-                onClick={handleExport}
-                disabled={loading || !selectedListId}
-              >
-                {loading ? 'Exporting...' : 'Export from Attio'}
-              </button>
-            </>
+                <label style={{ ...styles.label, marginTop: '16px' }}>Pipeline Name</label>
+                <input
+                  style={styles.input}
+                  type="text"
+                  placeholder="e.g., Acme Corp Series A"
+                  value={listName}
+                  onChange={(e) => setListName(e.target.value)}
+                />
+
+                <div style={styles.buttonRow}>
+                  <button style={styles.buttonSecondary} onClick={resetAttioImport}>
+                    Back
+                  </button>
+                  <button
+                    style={{
+                      ...styles.button,
+                      flex: 1,
+                      opacity: attioImportStatus === 'importing' || !attioColumnMappings.some(m => m.appColumn === 'name') || !listName.trim() ? 0.5 : 1,
+                    }}
+                    onClick={executeAttioImport}
+                    disabled={attioImportStatus === 'importing' || !attioColumnMappings.some(m => m.appColumn === 'name') || !listName.trim()}
+                  >
+                    {attioImportStatus === 'importing'
+                      ? 'Importing...'
+                      : attioImportStatus === 'success'
+                      ? 'Done!'
+                      : `Import ${attioEntryCount || 0} investors`}
+                  </button>
+                </div>
+
+                {!attioColumnMappings.some(m => m.appColumn === 'name') && (
+                  <p style={styles.warningText}>
+                    Map at least the investor name column to import.
+                  </p>
+                )}
+              </div>
+            ) : (
+              // List selection UI
+              <>
+                <label style={styles.label}>Select Attio List</label>
+                <select
+                  style={styles.select}
+                  value={selectedListId}
+                  onChange={(e) => handleAttioListSelect(e.target.value)}
+                >
+                  <option value="">Choose a list...</option>
+                  {lists.map((list) => (
+                    <option key={list.id} value={list.id}>
+                      {list.name}
+                    </option>
+                  ))}
+                </select>
+
+                {attioImportStatus === 'loading' && (
+                  <p style={styles.loadingText}>Loading list structure...</p>
+                )}
+              </>
+            )
           ) : (
             <p style={styles.noListsText}>
               No Attio lists found. Configure your API key or use CSV import above.
@@ -740,7 +994,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   mappingRow: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: '8px',
   },
   csvColumnName: {
@@ -754,10 +1008,60 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+  samplePreview: {
+    color: '#6a6a7a',
+    fontSize: '10px',
+    fontStyle: 'italic',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  tooltipWrapper: {
+    position: 'relative',
+    flex: 1,
+  },
+  tooltip: {
+    position: 'absolute',
+    bottom: '100%',
+    left: '0',
+    marginBottom: '8px',
+    padding: '8px 12px',
+    background: '#1a1a2e',
+    border: '1px solid #3a3a4a',
+    borderRadius: '6px',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+    zIndex: 1000,
+    minWidth: '150px',
+    maxWidth: '250px',
+    opacity: 0,
+    visibility: 'hidden',
+    transition: 'opacity 0.15s ease, visibility 0.15s ease',
+    pointerEvents: 'none',
+  },
+  tooltipLabel: {
+    color: '#8a8a9a',
+    fontSize: '10px',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '4px',
+  },
+  tooltipValue: {
+    color: '#e0e0e0',
+    fontSize: '12px',
+    padding: '2px 0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
   mappingArrow: {
     color: '#5a5a6a',
     fontSize: '12px',
+    paddingTop: '10px',
   },
   mappingSelect: {
     flex: 1,
@@ -769,6 +1073,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',
+    alignSelf: 'flex-start',
   },
   warningText: {
     color: '#f97316',
