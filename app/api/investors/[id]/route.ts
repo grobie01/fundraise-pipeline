@@ -12,7 +12,7 @@ export async function PATCH(
     const { id } = params;
     const body = await request.json();
 
-    const supabase = createServerClient();
+    const supabase = await createServerClient();
 
     // Build update object (only include fields that were sent)
     const updates: Record<string, any> = {
@@ -32,6 +32,7 @@ export async function PATCH(
     if (body.fit !== undefined) updates.fit = body.fit;
     if (body.fundSize !== undefined) updates.fund_size = body.fundSize;
     if (body.fund_size !== undefined) updates.fund_size = body.fund_size;
+    if (body.custom_fields !== undefined) updates.custom_fields = body.custom_fields;
     if (body.sort_order !== undefined) updates.sort_order = body.sort_order;
 
     const { data: investor, error } = await supabase
@@ -72,7 +73,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = params;
-    const supabase = createServerClient();
+    const supabase = await createServerClient();
 
     const { error } = await supabase
       .from('investors')

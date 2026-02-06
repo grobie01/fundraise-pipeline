@@ -21,12 +21,19 @@ export async function GET(
     const attributes = await getAttioListAttributes(listId);
 
     // Filter out system/meta attributes that aren't useful for mapping
-    const systemSlugs = ['entry_id', 'created_at', 'created_by', 'entry_created_at', 'entry_created_by'];
-    const filteredAttributes = attributes.filter(attr =>
-      !systemSlugs.includes(attr.api_slug) &&
-      !attr.api_slug.startsWith('entry_') &&
-      !attr.title.toLowerCase().includes('added to list')
-    );
+    const systemSlugs = ['entry_id', 'created_at', 'created_by', 'entry_created_at', 'entry_created_by', 'record_id'];
+    const filteredAttributes = attributes.filter(attr => {
+      const title = attr.title.toLowerCase();
+      const slug = attr.api_slug.toLowerCase();
+
+      return (
+        !systemSlugs.includes(attr.api_slug) &&
+        !slug.startsWith('entry_') &&
+        !title.includes('added to list') &&
+        !title.includes('changed at') &&
+        !title.includes('previous values')
+      );
+    });
 
     // Add a synthetic "Record" attribute for the parent record (company name)
     const syntheticRecord = {

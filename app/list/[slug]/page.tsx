@@ -5,16 +5,16 @@ import { createServerClient } from '@/lib/supabase';
 export const dynamic = 'force-dynamic';
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ slug: string }>;
 }
 
-async function getList(id: string) {
-  const supabase = createServerClient();
+async function getListBySlug(slug: string) {
+  const supabase = await createServerClient();
 
   const { data: list, error: listError } = await supabase
     .from('lists')
     .select('*')
-    .eq('id', id)
+    .eq('slug', slug)
     .single();
 
   if (listError || !list) {
@@ -24,7 +24,7 @@ async function getList(id: string) {
   const { data: investors } = await supabase
     .from('investors')
     .select('*')
-    .eq('list_id', id)
+    .eq('list_id', list.id)
     .order('sort_order', { ascending: true });
 
   return {
@@ -34,7 +34,8 @@ async function getList(id: string) {
 }
 
 export default async function ListPage({ params }: PageProps) {
-  const list = await getList(params.id);
+  const { slug } = await params;
+  const list = await getListBySlug(slug);
 
   if (!list) {
     notFound();
@@ -44,17 +45,20 @@ export default async function ListPage({ params }: PageProps) {
     <FundraiseTracker
       listId={list.id}
       listName={list.name}
+      listSlug={list.slug}
       initialInvestors={list.investors}
+      initialColumnOrder={list.column_order}
     />
   );
 }
 
 export async function generateMetadata({ params }: PageProps) {
-  const supabase = createServerClient();
+  const { slug } = await params;
+  const supabase = await createServerClient();
   const { data: list } = await supabase
     .from('lists')
     .select('name')
-    .eq('id', params.id)
+    .eq('slug', slug)
     .single();
 
   return {

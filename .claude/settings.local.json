@@ -7,7 +7,21 @@
       "Bash(lsof:*)",
       "Bash(curl:*)",
       "Bash(npx tsc:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd Attio CRM import with dynamic field mapping\n\n- Add field mapping UI for Attio import similar to CSV import\n- Filter out system columns \\(Entry ID, Added to list at/by\\)\n- Add parent record \\(company/firm name\\) as mappable column\n- Fetch and display sample values for each column\n- Add fuzzy matching to auto-suggest field mappings\n- Support tooltips showing example data on hover\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)",
+      "Bash(npm run start:*)",
+      "Bash(kill:*)",
+      "Bash(xargs kill:*)",
+      "Bash(npm run dev:*)",
+      "Bash(head:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(pgrep:*)",
+      "Bash(python3 -c \"import sys, json; data = sys.stdin.read\\(\\); idx = data.find\\(''''__NEXT_DATA__''''\\); print\\(data[idx:idx+500] if idx != -1 else ''''No Next data found''''\\)\")"
     ]
   }
 }

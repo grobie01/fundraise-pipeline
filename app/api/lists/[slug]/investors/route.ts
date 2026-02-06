@@ -3,22 +3,22 @@ import { createServerClient } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
-// POST /api/lists/[id]/investors - Add a new investor to a list
+// POST /api/lists/[slug]/investors - Add a new investor to a list
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ slug: string }> }
 ) {
   try {
-    const listId = params.id;
+    const { slug } = await params;
     const body = await request.json();
 
-    const supabase = createServerClient();
+    const supabase = await createServerClient();
 
-    // Verify the list exists
+    // Verify the list exists and get its ID
     const { data: list, error: listError } = await supabase
       .from('lists')
       .select('id')
-      .eq('id', listId)
+      .eq('slug', slug)
       .single();
 
     if (listError || !list) {
@@ -27,6 +27,8 @@ export async function POST(
         { status: 404 }
       );
     }
+
+    const listId = list.id;
 
     // Get the highest sort_order for this list
     const { data: maxOrderResult } = await supabase
@@ -53,6 +55,7 @@ export async function POST(
         firm_contact: body.firmContact || body.firm_contact || '',
         fit: body.fit ?? null,
         fund_size: body.fundSize || body.fund_size || '',
+        custom_fields: body.custom_fields || {},
         sort_order: nextSortOrder,
       })
       .select()
@@ -68,7 +71,7 @@ export async function POST(
 
     return NextResponse.json(investor);
   } catch (error) {
-    console.error('Error in POST /api/lists/[id]/investors:', error);
+    console.error('Error in POST /api/lists/[slug]/investors:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

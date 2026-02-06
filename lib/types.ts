@@ -12,6 +12,7 @@ export interface Investor {
   firm_contact: string;
   fit: number | null;
   fund_size: string;
+  custom_fields: Record<string, any>;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -20,6 +21,7 @@ export interface Investor {
 export interface List {
   id: string;
   name: string;
+  column_order: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +42,7 @@ export interface InvestorUI {
   firmContact: string;
   fit: number | null;
   fundSize: string;
+  customFields: Record<string, any>;
 }
 
 // Convert DB format to UI format
@@ -55,6 +58,7 @@ export function toInvestorUI(investor: Investor): InvestorUI {
     firmContact: investor.firm_contact,
     fit: investor.fit,
     fundSize: investor.fund_size,
+    customFields: investor.custom_fields || {},
   };
 }
 

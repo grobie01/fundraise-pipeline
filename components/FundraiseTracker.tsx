@@ -1,25 +1,28 @@
 'use client';
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import type { Investor, InvestorUI, Status } from '@/lib/types';
 import { toInvestorUI } from '@/lib/types';
+import { Sun, Moon } from 'lucide-react';
 
 const STATUSES: Status[] = ['Lead', 'First Meeting', 'Partner Meeting', 'Term Sheet', 'Passed'];
-const FIELDS = ['name', 'status', 'fit', 'fundSize', 'nextSteps', 'notes', 'amount', 'primaryContact', 'firmContact'];
+const TRADITIONAL_FIELDS = ['name', 'status', 'fit', 'fundSize', 'nextSteps', 'notes', 'amount', 'primaryContact', 'firmContact'];
 
-// Column mapping configuration for CSV import
-const COLUMN_CONFIG = [
-  { key: 'name', label: 'Investor Name', aliases: ['investor', 'firm', 'vc', 'fund', 'company', 'firm name', 'fund name', 'vc name'] },
-  { key: 'status', label: 'Status', aliases: ['stage', 'pipeline', 'progress'] },
-  { key: 'fit', label: 'Fit (1-5)', aliases: ['rating', 'score', 'priority', 'tier'] },
-  { key: 'fundSize', label: 'Fund Size', aliases: ['fund size', 'aum', 'assets', 'capital'] },
-  { key: 'nextSteps', label: 'Next Steps', aliases: ['next steps', 'next step', 'action', 'todo', 'follow up', 'followup'] },
-  { key: 'notes', label: 'Notes', aliases: ['note', 'comments', 'comment', 'description'] },
-  { key: 'amount', label: 'Amount', aliases: ['check size', 'investment', 'commitment', 'allocation'] },
-  { key: 'primaryContact', label: 'VC Contact', aliases: ['vc contact', 'contact', 'partner', 'gp', 'lead'] },
-  { key: 'firmContact', label: 'Our Contact', aliases: ['our contact', 'internal', 'team', 'owner', 'assigned'] },
+// Column metadata for traditional mode
+const TRADITIONAL_COLUMNS = [
+  { key: 'name', label: 'Investor', width: 180 },
+  { key: 'status', label: 'Status', width: 120 },
+  { key: 'fit', label: 'Fit', width: 50 },
+  { key: 'fundSize', label: 'Fund Size', width: 100 },
+  { key: 'nextSteps', label: 'Next Steps', width: 180 },
+  { key: 'notes', label: 'Notes', width: 200 },
+  { key: 'amount', label: 'Amount', width: 80 },
+  { key: 'primaryContact', label: 'VC Contact', width: 120 },
+  { key: 'firmContact', label: 'Our Contact', width: 100 },
 ];
+
 
 const STATUS_COLORS: Record<Status, { bg: string; text: string; border: string }> = {
   'Lead': { bg: 'rgba(99, 102, 241, 0.15)', text: '#818cf8', border: '#6366f1' },
@@ -29,36 +32,235 @@ const STATUS_COLORS: Record<Status, { bg: string; text: string; border: string }
   'Passed': { bg: 'rgba(239, 68, 68, 0.1)', text: '#f87171', border: '#ef4444' },
 };
 
+// Theme color schemes
+type Theme = 'light' | 'dark';
+
+interface ThemeColors {
+  background: string;
+  headerBorder: string;
+  text: string;
+  textSecondary: string;
+  textTertiary: string;
+  border: string;
+  borderLight: string;
+  cellHover: string;
+  inputBg: string;
+  inputShadow: string;
+  sectionHover: string;
+  placeholder: string;
+  modalBg: string;
+  modalBorder: string;
+  selectOptionBg: string;
+}
+
+const THEMES: Record<Theme, ThemeColors> = {
+  dark: {
+    background: '#0a0a0f',
+    headerBorder: '#1a1a2a',
+    text: '#ffffff',
+    textSecondary: '#a0a0b0',
+    textTertiary: '#5a5a6a',
+    border: '#1a1a2a',
+    borderLight: '#151520',
+    cellHover: 'rgba(255,255,255,0.02)',
+    inputBg: 'rgba(99, 102, 241, 0.1)',
+    inputShadow: 'rgba(99, 102, 241, 0.3)',
+    sectionHover: 'rgba(255,255,255,0.03)',
+    placeholder: '#3a3a4a',
+    modalBg: '#0f0f18',
+    modalBorder: '#2a2a3a',
+    selectOptionBg: '#1a1a2e',
+  },
+  light: {
+    background: '#ffffff',
+    headerBorder: '#e5e7eb',
+    text: '#111827',
+    textSecondary: '#4b5563',
+    textTertiary: '#9ca3af',
+    border: '#e5e7eb',
+    borderLight: '#f3f4f6',
+    cellHover: 'rgba(0,0,0,0.02)',
+    inputBg: 'rgba(99, 102, 241, 0.08)',
+    inputShadow: 'rgba(99, 102, 241, 0.25)',
+    sectionHover: 'rgba(0,0,0,0.03)',
+    placeholder: '#d1d5db',
+    modalBg: '#f9fafb',
+    modalBorder: '#e5e7eb',
+    selectOptionBg: '#ffffff',
+  },
+};
+
 interface FundraiseTrackerProps {
   listId: string;
   listName: string;
+  listSlug: string;
   initialInvestors: Investor[];
+  initialColumnOrder: string[] | null;
 }
 
-// CSV import types
-interface CsvRow {
-  [key: string]: string;
-}
 
-interface ColumnMapping {
-  csvColumn: string;
-  appColumn: string | null;
-}
-
-export default function FundraiseTracker({ listId, listName, initialInvestors }: FundraiseTrackerProps) {
+export default function FundraiseTracker({ listId, listName, listSlug, initialInvestors, initialColumnOrder }: FundraiseTrackerProps) {
   const [investors, setInvestors] = useState<InvestorUI[]>(() =>
     initialInvestors.map(toInvestorUI)
   );
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null);
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [draggedColumn, setDraggedColumn] = useState<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+  const [dropSide, setDropSide] = useState<'left' | 'right'>('left');
+  const [editingColumnKey, setEditingColumnKey] = useState<string | null>(null);
+  const [editingColumnValue, setEditingColumnValue] = useState<string>('');
+  const [theme, setTheme] = useState<Theme>('dark');
+  const [mounted, setMounted] = useState(false);
 
-  // CSV import state
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [csvData, setCsvData] = useState<CsvRow[]>([]);
-  const [csvColumns, setCsvColumns] = useState<string[]>([]);
-  const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
+  // Load theme from localStorage after mount to avoid hydration mismatch
+  useEffect(() => {
+    setMounted(true);
+    const savedTheme = localStorage.getItem('fundraise-theme') as Theme | null;
+    if (savedTheme === 'light' || savedTheme === 'dark') {
+      setTheme(savedTheme);
+    }
+  }, []);
+
+  // Update body background when theme changes
+  useEffect(() => {
+    if (mounted) {
+      document.body.style.background = THEMES[theme].background;
+    }
+  }, [theme, mounted]);
+
+  // Save theme to localStorage when it changes
+  const toggleTheme = () => {
+    setTheme(prev => {
+      const newTheme = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('fundraise-theme', newTheme);
+      return newTheme;
+    });
+  };
+
+  const colors = THEMES[theme];
+
+  // Detect if we're using custom fields (dynamic columns) or traditional fixed columns
+  const useCustomFields = useMemo(() => {
+    return investors.some(inv => inv.customFields && Object.keys(inv.customFields).length > 0);
+  }, [investors]);
+
+  // Extract dynamic column names from custom fields
+  const dynamicColumns = useMemo(() => {
+    if (!useCustomFields) return [];
+    const columnSet = new Set<string>();
+    investors.forEach(inv => {
+      if (inv.customFields) {
+        Object.keys(inv.customFields).forEach(key => columnSet.add(key));
+      }
+    });
+    return Array.from(columnSet).map(key => ({ key, label: key, width: 150 }));
+  }, [investors, useCustomFields]);
+
+  const columns = useMemo(() => {
+    if (useCustomFields) {
+      return [
+        { key: 'status', label: 'Status', width: 120 },
+        ...dynamicColumns,
+      ];
+    }
+    return TRADITIONAL_COLUMNS;
+  }, [useCustomFields, dynamicColumns]);
+
+  // Initialize column order from database or default order
+  useEffect(() => {
+    if (initialColumnOrder && initialColumnOrder.length > 0) {
+      setColumnOrder(initialColumnOrder);
+    } else {
+      setColumnOrder(columns.map(col => col.key));
+    }
+  }, [initialColumnOrder, columns]);
+
+  // Save column order to database when it changes
+  const saveColumnOrder = useCallback(async (newOrder: string[]) => {
+    try {
+      await fetch(`/api/lists/${listId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column_order: newOrder }),
+      });
+    } catch (error) {
+      console.error('Failed to save column order:', error);
+    }
+  }, [listId]);
+
+  // Rename a column (updates all investors' custom_fields)
+  const renameColumn = useCallback(async (oldKey: string, newLabel: string) => {
+    if (oldKey === newLabel || !newLabel.trim()) return;
+    if (oldKey === 'status' || !useCustomFields) return; // Can't rename status column or traditional columns
+
+    // Update local state
+    setInvestors(prev => prev.map(inv => {
+      if (!inv.customFields || !inv.customFields[oldKey]) return inv;
+
+      const newCustomFields = { ...inv.customFields };
+      newCustomFields[newLabel] = newCustomFields[oldKey];
+      delete newCustomFields[oldKey];
+
+      return { ...inv, customFields: newCustomFields };
+    }));
+
+    // Update all investors in the database
+    try {
+      const updatePromises = investors.map(async (inv) => {
+        if (!inv.customFields || !inv.customFields[oldKey]) return;
+
+        const newCustomFields = { ...inv.customFields };
+        newCustomFields[newLabel] = newCustomFields[oldKey];
+        delete newCustomFields[oldKey];
+
+        await fetch(`/api/investors/${inv.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ custom_fields: newCustomFields }),
+        });
+      });
+
+      await Promise.all(updatePromises);
+
+      // Update column order to reflect new name
+      const newColumnOrder = columnOrder.map(key => key === oldKey ? newLabel : key);
+      setColumnOrder(newColumnOrder);
+      await saveColumnOrder(newColumnOrder);
+
+    } catch (error) {
+      console.error('Failed to rename column:', error);
+    }
+  }, [listId, investors, useCustomFields, columnOrder, saveColumnOrder]);
+
+  // Get ordered columns based on saved order
+  const orderedColumns = useMemo(() => {
+    if (columnOrder.length === 0) return columns;
+
+    // Create a map for quick lookup
+    const columnMap = new Map(columns.map(col => [col.key, col]));
+
+    // Filter and map to ensure all columns exist
+    const ordered = columnOrder
+      .map(key => columnMap.get(key))
+      .filter((col): col is typeof columns[0] => col !== undefined);
+
+    // Add any new columns that aren't in the saved order
+    const orderedKeys = new Set(ordered.map(col => col.key));
+    const newColumns = columns.filter(col => !orderedKeys.has(col.key));
+
+    return [...ordered, ...newColumns];
+  }, [columns, columnOrder]);
+
+  // Use either traditional or dynamic fields (using ordered columns)
+  const FIELDS = useMemo(() => {
+    if (useCustomFields) {
+      return orderedColumns.map(col => col.key);
+    }
+    return TRADITIONAL_FIELDS;
+  }, [useCustomFields, orderedColumns]);
+
 
   // Track which cell is being edited to ignore realtime updates for it
   const editingCellRef = useRef<{ id: string; field: string } | null>(null);
@@ -181,18 +383,52 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
   // Update local state only (no API call)
   const updateInvestorLocal = (id: string, field: string, value: string | number | null) => {
     setInvestors(prev =>
-      prev.map(inv => (inv.id === id ? { ...inv, [field]: value } : inv))
+      prev.map(inv => {
+        if (inv.id !== id) return inv;
+
+        // For custom fields mode, update the customFields object
+        if (useCustomFields && field !== 'status' && field !== 'name') {
+          return {
+            ...inv,
+            customFields: {
+              ...inv.customFields,
+              [field]: value,
+            },
+          };
+        }
+
+        // For traditional mode or status/name fields
+        return { ...inv, [field]: value };
+      })
     );
   };
 
   // Save to API (called on blur/navigation)
   const saveInvestor = async (id: string, field: string, value: string | number | null) => {
     try {
-      await fetch(`/api/investors/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value }),
-      });
+      // For custom fields mode, save the entire customFields object
+      if (useCustomFields && field !== 'status' && field !== 'name') {
+        const investor = investors.find(inv => inv.id === id);
+        if (!investor) return;
+
+        const updatedCustomFields = {
+          ...investor.customFields,
+          [field]: value,
+        };
+
+        await fetch(`/api/investors/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ custom_fields: updatedCustomFields }),
+        });
+      } else {
+        // For traditional mode or status/name fields
+        await fetch(`/api/investors/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: value }),
+        });
+      }
     } catch (error) {
       console.error('Failed to update investor:', error);
     }
@@ -200,27 +436,51 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
 
   const addInvestor = async (status: Status) => {
     const tempId = `temp-${Date.now()}`;
-    const newInvestor: InvestorUI = {
-      id: tempId,
-      name: '',
-      status,
-      nextSteps: '',
-      notes: '',
-      amount: '',
-      primaryContact: '',
-      firmContact: '',
-      fit: null,
-      fundSize: '',
-    };
+
+    // Create appropriate new investor based on mode
+    const newInvestor: InvestorUI = useCustomFields
+      ? {
+          id: tempId,
+          name: '',
+          status,
+          nextSteps: '',
+          notes: '',
+          amount: '',
+          primaryContact: '',
+          firmContact: '',
+          fit: null,
+          fundSize: '',
+          customFields: Object.fromEntries(dynamicColumns.map(col => [col.key, ''])),
+        }
+      : {
+          id: tempId,
+          name: '',
+          status,
+          nextSteps: '',
+          notes: '',
+          amount: '',
+          primaryContact: '',
+          firmContact: '',
+          fit: null,
+          fundSize: '',
+          customFields: {},
+        };
 
     setInvestors(prev => [...prev, newInvestor]);
-    setEditingCell({ id: tempId, field: 'name' });
+
+    // Start editing the first editable field
+    const firstField = useCustomFields ? dynamicColumns[0]?.key : 'name';
+    setEditingCell({ id: tempId, field: firstField });
 
     try {
+      const requestBody = useCustomFields
+        ? { name: '', status, custom_fields: newInvestor.customFields }
+        : { name: '', status };
+
       const response = await fetch(`/api/lists/${listId}/investors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: '', status }),
+        body: JSON.stringify(requestBody),
       });
 
       if (response.ok) {
@@ -228,7 +488,7 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
         setInvestors(prev =>
           prev.map(inv => (inv.id === tempId ? toInvestorUI(created) : inv))
         );
-        setEditingCell({ id: created.id, field: 'name' });
+        setEditingCell({ id: created.id, field: firstField });
       }
     } catch (error) {
       console.error('Failed to add investor:', error);
@@ -256,185 +516,221 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
     return total > 0 ? `$${total}M` : '—';
   };
 
-  // CSV Import Functions
-  const fuzzyMatch = (csvCol: string, appCol: { key: string; label: string; aliases: string[] }): number => {
-    const normalizedCsv = csvCol.toLowerCase().trim();
-    const normalizedKey = appCol.key.toLowerCase();
-    const normalizedLabel = appCol.label.toLowerCase();
-
-    // Exact match with key or label
-    if (normalizedCsv === normalizedKey || normalizedCsv === normalizedLabel) return 100;
-
-    // Exact match with alias
-    if (appCol.aliases.some(a => normalizedCsv === a.toLowerCase())) return 95;
-
-    // Contains key or label
-    if (normalizedCsv.includes(normalizedKey) || normalizedKey.includes(normalizedCsv)) return 80;
-    if (normalizedCsv.includes(normalizedLabel) || normalizedLabel.includes(normalizedCsv)) return 75;
-
-    // Contains alias
-    if (appCol.aliases.some(a => normalizedCsv.includes(a.toLowerCase()) || a.toLowerCase().includes(normalizedCsv))) return 70;
-
-    return 0;
+  // Column drag and drop handlers
+  const handleColumnDragStart = (columnKey: string) => {
+    setDraggedColumn(columnKey);
+    setDragOverColumn(null);
   };
 
-  const findBestMatch = (csvColumn: string): string | null => {
-    let bestMatch: string | null = null;
-    let bestScore = 0;
-
-    for (const config of COLUMN_CONFIG) {
-      const score = fuzzyMatch(csvColumn, config);
-      if (score > bestScore && score >= 70) {
-        bestScore = score;
-        bestMatch = config.key;
-      }
-    }
-
-    return bestMatch;
-  };
-
-  const parseCSV = (text: string): { columns: string[]; rows: CsvRow[] } => {
-    const lines = text.split(/\r?\n/).filter(line => line.trim());
-    if (lines.length === 0) return { columns: [], rows: [] };
-
-    // Parse header
-    const columns = lines[0].split(',').map(col => col.trim().replace(/^"|"$/g, ''));
-
-    // Parse rows
-    const rows: CsvRow[] = [];
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map(val => val.trim().replace(/^"|"$/g, ''));
-      const row: CsvRow = {};
-      columns.forEach((col, idx) => {
-        row[col] = values[idx] || '';
-      });
-      if (Object.values(row).some(v => v)) {
-        rows.push(row);
-      }
-    }
-
-    return { columns, rows };
-  };
-
-  const handleFileUpload = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      const { columns, rows } = parseCSV(text);
-
-      setCsvColumns(columns);
-      setCsvData(rows);
-
-      // Auto-map columns using fuzzy matching
-      const mappings: ColumnMapping[] = columns.map(col => ({
-        csvColumn: col,
-        appColumn: findBestMatch(col),
-      }));
-      setColumnMappings(mappings);
-      setImportStatus('idle');
-    };
-    reader.readAsText(file);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
+  const handleColumnDragOver = (e: React.DragEvent, columnKey: string) => {
     e.preventDefault();
-    setIsDragging(false);
+    if (draggedColumn === null || draggedColumn === columnKey) return;
 
-    const file = e.dataTransfer.files[0];
-    if (file && (file.type === 'text/csv' || file.name.endsWith('.csv'))) {
-      handleFileUpload(file);
-    }
+    // Determine which half of the column we're hovering over
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midpoint = rect.left + rect.width / 2;
+    const side = e.clientX < midpoint ? 'left' : 'right';
+
+    setDragOverColumn(columnKey);
+    setDropSide(side);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleColumnDrop = (e: React.DragEvent, dropColumnKey: string) => {
     e.preventDefault();
-    setIsDragging(true);
+    if (draggedColumn === null || draggedColumn === dropColumnKey) {
+      setDraggedColumn(null);
+      setDragOverColumn(null);
+      setDropSide('left');
+      return;
+    }
+
+    // Get all current column keys in order
+    const allColumnKeys = orderedColumns.map(col => col.key);
+
+    // Build new order by rearranging keys
+    const newOrder = [...allColumnKeys];
+    const draggedIndex = newOrder.indexOf(draggedColumn);
+    let dropIndex = newOrder.indexOf(dropColumnKey);
+
+    if (draggedIndex === -1 || dropIndex === -1) {
+      setDraggedColumn(null);
+      setDragOverColumn(null);
+      return;
+    }
+
+    // If dropping on the right side, we want to insert AFTER this column
+    if (dropSide === 'right') {
+      dropIndex += 1;
+    }
+
+    // Remove dragged column from its current position
+    const [removed] = newOrder.splice(draggedIndex, 1);
+
+    // Adjust drop index if dragging to the right
+    // (after removal, everything shifts left by 1)
+    let adjustedDropIndex = dropIndex;
+    if (draggedIndex < dropIndex) {
+      adjustedDropIndex = dropIndex - 1;
+    }
+
+    // Insert it at the adjusted drop position
+    newOrder.splice(adjustedDropIndex, 0, removed);
+
+    setColumnOrder(newOrder);
+    setDraggedColumn(null);
+    setDragOverColumn(null);
+    setDropSide('left');
+
+    // Save the new order to the database
+    saveColumnOrder(newOrder);
   };
 
-  const handleDragLeave = () => {
-    setIsDragging(false);
+  const handleColumnDragEnd = () => {
+    // Use setTimeout to ensure state is reset after the drop event completes
+    setTimeout(() => {
+      setDraggedColumn(null);
+      setDragOverColumn(null);
+      setDropSide('left');
+    }, 0);
   };
 
-  const updateMapping = (csvColumn: string, appColumn: string | null) => {
-    setColumnMappings(prev =>
-      prev.map(m => (m.csvColumn === csvColumn ? { ...m, appColumn } : m))
+  // Get value for a field from investor (handles both traditional and custom fields)
+  const getFieldValue = (investor: InvestorUI, fieldKey: string): string | number | null => {
+    if (useCustomFields && fieldKey !== 'status' && fieldKey !== 'name') {
+      return investor.customFields?.[fieldKey] ?? '';
+    }
+    return investor[fieldKey as keyof InvestorUI] as string | number | null;
+  };
+
+  // Render a cell based on field type
+  const renderCell = (investor: InvestorUI, column: { key: string; label: string; width: number }) => {
+    const fieldKey = column.key;
+    const value = getFieldValue(investor, fieldKey);
+    const isEditing = editingCell?.id === investor.id && editingCell?.field === fieldKey;
+
+    // Status column - always use StatusSelect
+    if (fieldKey === 'status') {
+      return (
+        <td key={fieldKey} style={styles.cell}>
+          <StatusSelect
+            value={investor.status}
+            isEditing={isEditing}
+            onStartEdit={() => setEditingCell({ id: investor.id, field: fieldKey })}
+            onEndEdit={() => setEditingCell(null)}
+            onChange={(val) => {
+              updateInvestorLocal(investor.id, fieldKey, val);
+              saveInvestor(investor.id, fieldKey, val);
+            }}
+            onNavigate={(dir) => navigateToCell(investor.id, fieldKey, dir)}
+            theme={theme}
+            themeColors={colors}
+          />
+        </td>
+      );
+    }
+
+    // Fit column in traditional mode - use FitSelect
+    if (!useCustomFields && fieldKey === 'fit') {
+      return (
+        <td key={fieldKey} style={{ ...styles.cell, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
+          <FitSelect
+            value={investor.fit}
+            isEditing={isEditing}
+            onStartEdit={() => setEditingCell({ id: investor.id, field: fieldKey })}
+            onEndEdit={() => setEditingCell(null)}
+            onChange={(val) => {
+              updateInvestorLocal(investor.id, fieldKey, val);
+              saveInvestor(investor.id, fieldKey, val);
+            }}
+            onNavigate={(dir) => navigateToCell(investor.id, fieldKey, dir)}
+            theme={theme}
+            themeColors={colors}
+          />
+        </td>
+      );
+    }
+
+    // Regular editable cell
+    const cellStyle = fieldKey === 'name'
+      ? { ...styles.cell, fontWeight: 500, color: colors.text }
+      : { ...styles.cell, color: colors.textSecondary };
+
+    return (
+      <td key={fieldKey} style={cellStyle}>
+        <EditableCell
+          value={String(value || '')}
+          isEditing={isEditing}
+          onStartEdit={() => setEditingCell({ id: investor.id, field: fieldKey })}
+          onEndEdit={() => setEditingCell(null)}
+          onChange={(val) => updateInvestorLocal(investor.id, fieldKey, val)}
+          onSave={(val) => saveInvestor(investor.id, fieldKey, val)}
+          onNavigate={(dir) => navigateToCell(investor.id, fieldKey, dir)}
+          placeholder={fieldKey === 'name' ? 'Investor name' : '—'}
+          theme={theme}
+          themeColors={colors}
+        />
+      </td>
     );
   };
 
-  const executeImport = async () => {
-    setImportStatus('importing');
+  // CSV Import Functions
+  // Export to CSV function
+  const exportToCSV = () => {
+    // Get all column keys
+    const columnKeys = orderedColumns.map(col => col.key);
 
-    try {
-      const importedInvestors: Partial<InvestorUI>[] = csvData.map(row => {
-        const investor: Partial<InvestorUI> = {
-          status: 'Lead' as Status,
-        };
+    // Create CSV header
+    const headers = orderedColumns.map(col => col.label);
 
-        columnMappings.forEach(mapping => {
-          if (mapping.appColumn && row[mapping.csvColumn]) {
-            const value = row[mapping.csvColumn];
+    // Create CSV rows
+    const rows = investors.map(investor => {
+      return columnKeys.map(key => {
+        let value: string;
 
-            if (mapping.appColumn === 'fit') {
-              const num = parseInt(value, 10);
-              if (num >= 1 && num <= 5) {
-                investor.fit = num;
-              }
-            } else if (mapping.appColumn === 'status') {
-              // Try to match status value
-              const matchedStatus = STATUSES.find(s =>
-                s.toLowerCase() === value.toLowerCase() ||
-                s.toLowerCase().includes(value.toLowerCase()) ||
-                value.toLowerCase().includes(s.toLowerCase())
-              );
-              if (matchedStatus) {
-                investor.status = matchedStatus;
-              }
-            } else {
-              (investor as any)[mapping.appColumn] = value;
-            }
-          }
-        });
-
-        return investor;
-      });
-
-      // Create investors via API
-      for (const inv of importedInvestors) {
-        if (inv.name) {
-          const response = await fetch(`/api/lists/${listId}/investors`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(inv),
-          });
-
-          if (response.ok) {
-            const created = await response.json();
-            setInvestors(prev => [...prev, toInvestorUI(created)]);
-          }
+        if (key === 'status') {
+          value = investor.status;
+        } else if (useCustomFields && key !== 'status') {
+          value = String(investor.customFields?.[key] || '');
+        } else {
+          value = String(investor[key as keyof InvestorUI] || '');
         }
-      }
 
-      setImportStatus('success');
-      setTimeout(() => {
-        setShowImportModal(false);
-        setCsvData([]);
-        setCsvColumns([]);
-        setColumnMappings([]);
-        setImportStatus('idle');
-      }, 1500);
-    } catch (error) {
-      console.error('Import failed:', error);
-      setImportStatus('error');
-    }
+        // Escape quotes and wrap in quotes if contains comma, quote, or newline
+        if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+          value = '"' + value.replace(/"/g, '""') + '"';
+        }
+
+        return value;
+      });
+    });
+
+    // Combine header and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${listName}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
-
-  const totalActive = investors.filter(i => i.status !== 'Passed').length;
-  const totalTermSheets = getInvestorsByStatus('Term Sheet').length;
 
   // Inject styles via useEffect to avoid hydration mismatch
   useEffect(() => {
     const styleId = 'fundraise-tracker-styles';
-    if (document.getElementById(styleId)) return;
+    const existingStyle = document.getElementById(styleId);
+
+    // Remove existing style if it exists
+    if (existingStyle) {
+      existingStyle.remove();
+    }
 
     const style = document.createElement('style');
     style.id = styleId;
@@ -447,51 +743,29 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
       }
 
       .row { transition: background 0.1s ease; }
-      .row:hover { background: rgba(255,255,255,0.02); }
+      .row:hover { background: ${colors.cellHover}; }
       .row:hover .delete-btn { opacity: 1; }
 
       .cell-input {
         width: 100%;
         border: none;
-        background: rgba(99, 102, 241, 0.1);
+        background: ${colors.inputBg};
         font-family: 'Space Grotesk', sans-serif;
         font-size: 13px;
-        color: #e0e0e0;
+        color: ${colors.text};
         padding: 4px 6px;
         margin: -4px -6px;
         outline: none;
         border-radius: 4px;
-        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+        box-shadow: 0 0 0 2px ${colors.inputShadow};
       }
 
       .cell-input::placeholder {
-        color: #4a4a5a;
+        color: ${colors.placeholder};
       }
 
       .add-row { transition: background 0.1s ease; }
-      .add-row:hover { background: rgba(255,255,255,0.02); }
-
-      .status-select {
-        appearance: none;
-        border: 1px solid transparent;
-        background: transparent;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 11px;
-        padding: 4px 8px;
-        border-radius: 4px;
-        cursor: pointer;
-        outline: none;
-        transition: all 0.15s ease;
-      }
-
-      .status-select:hover {
-        border-color: currentColor;
-      }
-
-      .status-select option {
-        background: #1a1a2e;
-        color: #e0e0e0;
-      }
+      .add-row:hover { background: ${colors.cellHover}; }
 
       .delete-btn {
         opacity: 0;
@@ -503,7 +777,7 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
       }
 
       .section-header:hover {
-        background: rgba(255,255,255,0.03);
+        background: ${colors.sectionHover};
       }
 
       @keyframes fadeIn {
@@ -517,36 +791,54 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
       const existingStyle = document.getElementById(styleId);
       if (existingStyle) existingStyle.remove();
     };
-  }, []);
+  }, [theme, colors]);
+
+  // Don't render until mounted to prevent flash
+  if (!mounted) {
+    return null;
+  }
 
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
+    <div suppressHydrationWarning style={{ ...styles.container, background: colors.background }}>
+      <header suppressHydrationWarning style={{ ...styles.header, borderBottom: `1px solid ${colors.border}` }}>
         <div style={styles.headerLeft}>
           <div style={styles.logoMark}></div>
           <div>
-            <h1 style={styles.title}>{listName}</h1>
-            <p style={styles.subtitle}>{investors.length} investors tracked</p>
+            <h1 style={{ ...styles.title, color: colors.text }}>{listName}</h1>
+            <p style={{ ...styles.subtitle, color: colors.textTertiary }}>{investors.length} investors tracked</p>
           </div>
         </div>
         <div style={styles.headerRight}>
           <button
-            style={styles.importButton}
-            onClick={() => setShowImportModal(true)}
+            style={{
+              ...styles.themeToggle,
+              background: theme === 'dark' ? '#2a2a3a' : '#e5e7eb',
+            }}
+            onClick={toggleTheme}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           >
-            Import CSV
+            <div style={{
+              ...styles.toggleTrack,
+            }}>
+              <div style={{
+                ...styles.toggleThumb,
+                transform: theme === 'dark' ? 'translateX(0)' : 'translateX(20px)',
+                background: theme === 'dark' ? '#6366f1' : '#f59e0b',
+              }}>
+                {theme === 'dark' ? (
+                  <Moon size={12} color="white" strokeWidth={2} />
+                ) : (
+                  <Sun size={12} color="rgba(255, 255, 255, 0.9)" strokeWidth={2} />
+                )}
+              </div>
+            </div>
           </button>
-          <div style={styles.stats}>
-            <div style={styles.stat}>
-              <span style={styles.statValue}>{totalActive}</span>
-              <span style={styles.statLabel}>active</span>
-            </div>
-            <div style={styles.statDivider}></div>
-            <div style={styles.stat}>
-              <span style={{ ...styles.statValue, color: '#22d3ee' }}>{totalTermSheets}</span>
-              <span style={styles.statLabel}>term sheets</span>
-            </div>
-          </div>
+          <button
+            style={styles.exportButton}
+            onClick={exportToCSV}
+          >
+            Export CSV
+          </button>
         </div>
       </header>
 
@@ -554,23 +846,80 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
         <table style={styles.table}>
           <thead>
             <tr>
-              <th style={{ ...styles.th, width: 36 }}></th>
-              <th style={{ ...styles.th, width: 180 }}>Investor</th>
-              <th style={{ ...styles.th, width: 120 }}>Status</th>
-              <th style={{ ...styles.th, width: 50 }}>Fit</th>
-              <th style={{ ...styles.th, width: 100 }}>Fund Size</th>
-              <th style={{ ...styles.th, width: 180 }}>Next Steps</th>
-              <th style={{ ...styles.th, width: 200 }}>Notes</th>
-              <th style={{ ...styles.th, width: 80 }}>Amount</th>
-              <th style={{ ...styles.th, width: 120 }}>VC Contact</th>
-              <th style={{ ...styles.th, width: 100 }}>Our Contact</th>
+              <th style={{ ...styles.th, width: 36, color: colors.textTertiary, borderBottom: `1px solid ${colors.border}` }}></th>
+              {orderedColumns.map((col, index) => (
+                  <th
+                    key={col.key}
+                    draggable={editingColumnKey !== col.key}
+                    onDragStart={() => handleColumnDragStart(col.key)}
+                    onDragOver={(e) => handleColumnDragOver(e, col.key)}
+                    onDrop={(e) => handleColumnDrop(e, col.key)}
+                    onDragEnd={handleColumnDragEnd}
+                    onDoubleClick={() => {
+                      if (useCustomFields && col.key !== 'status') {
+                        setEditingColumnKey(col.key);
+                        setEditingColumnValue(col.label);
+                      }
+                    }}
+                    style={{
+                      ...styles.th,
+                      width: col.width,
+                      cursor: editingColumnKey === col.key ? 'text' : (draggedColumn === col.key ? 'grabbing' : 'grab'),
+                      opacity: draggedColumn === col.key ? 0.5 : 1,
+                      transition: 'all 0.15s ease',
+                      color: colors.textTertiary,
+                      borderBottom: `1px solid ${colors.border}`,
+                      borderLeft: dragOverColumn === col.key && draggedColumn !== null && draggedColumn !== col.key && dropSide === 'left' ?
+                        `3px solid ${theme === 'dark' ? '#6366f1' : '#8b5cf6'}` :
+                        '3px solid transparent',
+                      borderRight: dragOverColumn === col.key && draggedColumn !== null && draggedColumn !== col.key && dropSide === 'right' ?
+                        `3px solid ${theme === 'dark' ? '#6366f1' : '#8b5cf6'}` :
+                        '3px solid transparent',
+                      position: 'relative' as const,
+                    }}
+                  >
+                  {editingColumnKey === col.key ? (
+                    <input
+                      type="text"
+                      value={editingColumnValue}
+                      onChange={(e) => setEditingColumnValue(e.target.value)}
+                      onBlur={() => {
+                        renameColumn(col.key, editingColumnValue);
+                        setEditingColumnKey(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          renameColumn(col.key, editingColumnValue);
+                          setEditingColumnKey(null);
+                        } else if (e.key === 'Escape') {
+                          setEditingColumnKey(null);
+                        }
+                      }}
+                      autoFocus
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: colors.textTertiary,
+                        fontSize: '11px',
+                        fontFamily: "'JetBrains Mono', monospace",
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        outline: 'none',
+                        width: '100%',
+                      }}
+                    />
+                  ) : (
+                    col.label
+                  )}
+                  </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {STATUSES.map(status => {
               const statusInvestors = getInvestorsByStatus(status);
               const isCollapsed = collapsedSections[status];
-              const colors = STATUS_COLORS[status];
+              const statusColors = STATUS_COLORS[status];
 
               return (
                 <React.Fragment key={status}>
@@ -579,23 +928,24 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
                     style={styles.sectionHeader}
                     onClick={() => toggleSection(status)}
                   >
-                    <td colSpan={10} style={styles.sectionHeaderCell}>
+                    <td colSpan={orderedColumns.length + 1} style={{ ...styles.sectionHeaderCell, borderBottom: `1px solid ${colors.border}` }}>
                       <div style={styles.sectionHeaderContent}>
                         <div style={styles.sectionLeft}>
                           <span
                             style={{
                               ...styles.chevron,
+                              color: colors.textTertiary,
                               transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
                             }}
                           >
                             ▾
                           </span>
-                          <span style={{ ...styles.statusIndicator, background: colors.border }}></span>
-                          <span style={{ ...styles.sectionTitle, color: colors.text }}>{status}</span>
-                          <span style={styles.sectionCount}>{statusInvestors.length}</span>
+                          <span style={{ ...styles.statusIndicator, background: statusColors.border }}></span>
+                          <span style={{ ...styles.sectionTitle, color: statusColors.text }}>{status}</span>
+                          <span style={{ ...styles.sectionCount, color: colors.placeholder }}>{statusInvestors.length}</span>
                         </div>
                         <div style={styles.sectionRight}>
-                          <span style={styles.sumValue}>{calculateSum(status)}</span>
+                          <span style={{ ...styles.sumValue, color: colors.textTertiary }}>{calculateSum(status)}</span>
                         </div>
                       </div>
                     </td>
@@ -608,6 +958,7 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
                         className="row"
                         style={{
                           ...styles.row,
+                          borderBottom: `1px solid ${colors.borderLight}`,
                           animation: `fadeIn 0.2s ease ${idx * 0.02}s both`,
                         }}
                       >
@@ -620,124 +971,15 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
                             ×
                           </button>
                         </td>
-                        <td style={{ ...styles.cell, fontWeight: 500, color: '#fff' }}>
-                          <EditableCell
-                            value={investor.name}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'name'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'name' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => updateInvestorLocal(investor.id, 'name', val)}
-                            onSave={(val) => saveInvestor(investor.id, 'name', val)}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'name', dir)}
-                            placeholder="Investor name"
-                          />
-                        </td>
-                        <td style={styles.cell}>
-                          <StatusSelect
-                            value={investor.status}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'status'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'status' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => {
-                              updateInvestorLocal(investor.id, 'status', val);
-                              saveInvestor(investor.id, 'status', val);
-                            }}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'status', dir)}
-                          />
-                        </td>
-                        <td style={{ ...styles.cell, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
-                          <FitSelect
-                            value={investor.fit}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'fit'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'fit' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => {
-                              updateInvestorLocal(investor.id, 'fit', val);
-                              saveInvestor(investor.id, 'fit', val);
-                            }}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'fit', dir)}
-                          />
-                        </td>
-                        <td style={{ ...styles.cell, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
-                          <EditableCell
-                            value={investor.fundSize}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'fundSize'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'fundSize' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => updateInvestorLocal(investor.id, 'fundSize', val)}
-                            onSave={(val) => saveInvestor(investor.id, 'fundSize', val)}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'fundSize', dir)}
-                            placeholder="—"
-                          />
-                        </td>
-                        <td style={styles.cell}>
-                          <EditableCell
-                            value={investor.nextSteps}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'nextSteps'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'nextSteps' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => updateInvestorLocal(investor.id, 'nextSteps', val)}
-                            onSave={(val) => saveInvestor(investor.id, 'nextSteps', val)}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'nextSteps', dir)}
-                            placeholder="—"
-                          />
-                        </td>
-                        <td style={styles.cell}>
-                          <EditableCell
-                            value={investor.notes}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'notes'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'notes' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => updateInvestorLocal(investor.id, 'notes', val)}
-                            onSave={(val) => saveInvestor(investor.id, 'notes', val)}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'notes', dir)}
-                            placeholder="—"
-                          />
-                        </td>
-                        <td style={{ ...styles.cell, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
-                          <EditableCell
-                            value={investor.amount}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'amount'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'amount' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => updateInvestorLocal(investor.id, 'amount', val)}
-                            onSave={(val) => saveInvestor(investor.id, 'amount', val)}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'amount', dir)}
-                            placeholder="—"
-                          />
-                        </td>
-                        <td style={styles.cell}>
-                          <EditableCell
-                            value={investor.primaryContact}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'primaryContact'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'primaryContact' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => updateInvestorLocal(investor.id, 'primaryContact', val)}
-                            onSave={(val) => saveInvestor(investor.id, 'primaryContact', val)}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'primaryContact', dir)}
-                            placeholder="—"
-                          />
-                        </td>
-                        <td style={styles.cell}>
-                          <EditableCell
-                            value={investor.firmContact}
-                            isEditing={editingCell?.id === investor.id && editingCell?.field === 'firmContact'}
-                            onStartEdit={() => setEditingCell({ id: investor.id, field: 'firmContact' })}
-                            onEndEdit={() => setEditingCell(null)}
-                            onChange={(val) => updateInvestorLocal(investor.id, 'firmContact', val)}
-                            onSave={(val) => saveInvestor(investor.id, 'firmContact', val)}
-                            onNavigate={(dir) => navigateToCell(investor.id, 'firmContact', dir)}
-                            placeholder="—"
-                          />
-                        </td>
+                        {orderedColumns.map(col => renderCell(investor, col))}
                       </tr>
                     ))}
 
                   {!isCollapsed && (
-                    <tr className="add-row" style={styles.addRow} onClick={() => addInvestor(status)}>
+                    <tr className="add-row" style={{ ...styles.addRow, borderBottom: `1px solid ${colors.border}` }} onClick={() => addInvestor(status)}>
                       <td style={styles.cellAction}></td>
-                      <td colSpan={9} style={styles.addRowCell}>
-                        <span style={styles.addText}>+ Add investor</span>
+                      <td colSpan={orderedColumns.length} style={styles.addRowCell}>
+                        <span style={{ ...styles.addText, color: colors.placeholder }}>+ Add investor</span>
                       </td>
                     </tr>
                   )}
@@ -748,147 +990,12 @@ export default function FundraiseTracker({ listId, listName, initialInvestors }:
         </table>
       </div>
 
-      <div style={styles.footer}>
-        <span style={styles.hint}>Tab → next cell</span>
-        <span style={styles.hint}>Enter ↓ next row</span>
-        <span style={styles.hint}>Shift reverses direction</span>
+      <div style={{ ...styles.footer, background: colors.background, borderTop: `1px solid ${colors.border}` }}>
+        <span style={{ ...styles.hint, color: colors.placeholder }}>Tab → next cell</span>
+        <span style={{ ...styles.hint, color: colors.placeholder }}>Enter ↓ next row</span>
+        <span style={{ ...styles.hint, color: colors.placeholder }}>Shift reverses direction</span>
       </div>
 
-      {/* CSV Import Modal */}
-      {showImportModal && (
-        <div style={styles.modalOverlay} onClick={() => setShowImportModal(false)}>
-          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>Import from CSV</h2>
-              <button
-                style={styles.modalClose}
-                onClick={() => {
-                  setShowImportModal(false);
-                  setCsvData([]);
-                  setCsvColumns([]);
-                  setColumnMappings([]);
-                }}
-              >
-                ×
-              </button>
-            </div>
-
-            {csvColumns.length === 0 ? (
-              <div
-                style={{
-                  ...styles.dropZone,
-                  borderColor: isDragging ? '#6366f1' : '#2a2a3a',
-                  background: isDragging ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-                }}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-              >
-                <div style={styles.dropZoneContent}>
-                  <div style={styles.dropIcon}>📄</div>
-                  <p style={styles.dropText}>Drag and drop a CSV file here</p>
-                  <p style={styles.dropSubtext}>or</p>
-                  <label style={styles.fileInputLabel}>
-                    Browse files
-                    <input
-                      type="file"
-                      accept=".csv"
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleFileUpload(file);
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-            ) : (
-              <div style={styles.mappingContainer}>
-                <p style={styles.mappingInfo}>
-                  Found {csvData.length} rows with {csvColumns.length} columns.
-                  Map your CSV columns to the app fields:
-                </p>
-
-                <div style={styles.mappingList}>
-                  {columnMappings.map((mapping) => (
-                    <div key={mapping.csvColumn} style={styles.mappingRow}>
-                      <div style={styles.csvColumnName}>{mapping.csvColumn}</div>
-                      <div style={styles.mappingArrow}>→</div>
-                      <select
-                        style={styles.mappingSelect}
-                        value={mapping.appColumn || ''}
-                        onChange={(e) => updateMapping(mapping.csvColumn, e.target.value || null)}
-                      >
-                        <option value="">Don't import</option>
-                        {COLUMN_CONFIG.map((col) => (
-                          <option key={col.key} value={col.key}>
-                            {col.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-
-                {csvData.length > 0 && (
-                  <div style={styles.previewContainer}>
-                    <p style={styles.previewTitle}>Preview (first 3 rows):</p>
-                    <div style={styles.previewTable}>
-                      {csvData.slice(0, 3).map((row, idx) => (
-                        <div key={idx} style={styles.previewRow}>
-                          {columnMappings
-                            .filter((m) => m.appColumn)
-                            .map((m) => (
-                              <div key={m.csvColumn} style={styles.previewCell}>
-                                <span style={styles.previewLabel}>
-                                  {COLUMN_CONFIG.find((c) => c.key === m.appColumn)?.label}:
-                                </span>
-                                <span style={styles.previewValue}>{row[m.csvColumn] || '—'}</span>
-                              </div>
-                            ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div style={styles.modalActions}>
-                  <button
-                    style={styles.cancelButton}
-                    onClick={() => {
-                      setCsvData([]);
-                      setCsvColumns([]);
-                      setColumnMappings([]);
-                    }}
-                  >
-                    Back
-                  </button>
-                  <button
-                    style={{
-                      ...styles.importActionButton,
-                      opacity: importStatus === 'importing' ? 0.7 : 1,
-                    }}
-                    onClick={executeImport}
-                    disabled={importStatus === 'importing' || !columnMappings.some((m) => m.appColumn === 'name')}
-                  >
-                    {importStatus === 'importing'
-                      ? 'Importing...'
-                      : importStatus === 'success'
-                      ? 'Done!'
-                      : `Import ${csvData.length} investors`}
-                  </button>
-                </div>
-
-                {!columnMappings.some((m) => m.appColumn === 'name') && (
-                  <p style={styles.warningText}>
-                    Please map at least the investor name column to import.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -902,9 +1009,11 @@ interface EditableCellProps {
   onSave: (value: string) => void;
   onNavigate: (direction: string) => void;
   placeholder: string;
+  theme: Theme;
+  themeColors: ThemeColors;
 }
 
-function EditableCell({ value, isEditing, onStartEdit, onEndEdit, onChange, onSave, onNavigate, placeholder }: EditableCellProps) {
+function EditableCell({ value, isEditing, onStartEdit, onEndEdit, onChange, onSave, onNavigate, placeholder, theme, themeColors }: EditableCellProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const valueRef = useRef(value);
 
@@ -962,7 +1071,7 @@ function EditableCell({ value, isEditing, onStartEdit, onEndEdit, onChange, onSa
       style={{
         minHeight: '20px',
         cursor: 'text',
-        color: value ? 'inherit' : '#3a3a4a',
+        color: value ? 'inherit' : themeColors.placeholder,
       }}
     >
       {value || placeholder}
@@ -977,23 +1086,62 @@ interface StatusSelectProps {
   onEndEdit: () => void;
   onChange: (value: string) => void;
   onNavigate: (direction: string) => void;
+  theme: Theme;
+  themeColors: ThemeColors;
 }
 
-function StatusSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNavigate }: StatusSelectProps) {
-  const selectRef = useRef<HTMLSelectElement>(null);
+function StatusSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNavigate, theme, themeColors }: StatusSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState<number>(STATUSES.indexOf(value));
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLDivElement>(null);
   const isNavigatingRef = useRef(false);
-  const colors = STATUS_COLORS[value];
+  const statusColors = STATUS_COLORS[value];
 
   useEffect(() => {
-    if (isEditing && selectRef.current) {
-      selectRef.current.focus();
+    if (isEditing && dropdownRef.current) {
+      dropdownRef.current.focus();
     }
   }, [isEditing]);
+
+  useEffect(() => {
+    if (isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setPosition({
+        top: rect.bottom + 4,
+        left: rect.left
+      });
+      // Reset highlighted index to current value when dropdown opens
+      setHighlightedIndex(STATUSES.indexOf(value));
+    }
+  }, [isOpen, value]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node) &&
+          buttonRef.current && !buttonRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+        if (!isNavigatingRef.current) {
+          onEndEdit();
+        }
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen, onEndEdit]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Tab') {
       e.preventDefault();
       isNavigatingRef.current = true;
+      setIsOpen(false);
       if (e.shiftKey) {
         onNavigate('left');
       } else {
@@ -1001,45 +1149,167 @@ function StatusSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNa
       }
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      isNavigatingRef.current = true;
-      if (e.shiftKey) {
-        onNavigate('up');
+      if (isOpen) {
+        // Select the highlighted option
+        onChange(STATUSES[highlightedIndex]);
+        setIsOpen(false);
       } else {
-        onNavigate('down');
+        isNavigatingRef.current = true;
+        setIsOpen(false);
+        if (e.shiftKey) {
+          onNavigate('up');
+        } else {
+          onNavigate('down');
+        }
       }
     } else if (e.key === 'Escape') {
+      setIsOpen(false);
       onEndEdit();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!isOpen) {
+        setIsOpen(true);
+      } else {
+        // Just update highlighted index, don't change the value yet
+        const nextIndex = e.key === 'ArrowDown'
+          ? Math.min(highlightedIndex + 1, STATUSES.length - 1)
+          : Math.max(highlightedIndex - 1, 0);
+        setHighlightedIndex(nextIndex);
+      }
     }
   };
 
-  const handleBlur = () => {
-    if (!isNavigatingRef.current) {
-      onEndEdit();
-    }
+  const handleSelect = (status: Status) => {
+    onChange(status);
+    setIsOpen(false);
     isNavigatingRef.current = false;
   };
 
+  const dropdownMenu = isOpen && position && typeof window !== 'undefined' ? createPortal(
+    <>
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 999998,
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(false);
+        }}
+      />
+      <div
+        ref={dropdownRef}
+        style={{
+          position: 'fixed',
+          top: `${position.top}px`,
+          left: `${position.left}px`,
+          background: theme === 'dark' ? '#12121a' : '#ffffff',
+          border: `1px solid ${themeColors.border}`,
+          borderRadius: '6px',
+          boxShadow: theme === 'dark' ? '0 8px 24px rgba(0, 0, 0, 0.8)' : '0 8px 24px rgba(0, 0, 0, 0.3)',
+          zIndex: 999999,
+          minWidth: '160px',
+          overflow: 'hidden',
+        }}
+      >
+        {STATUSES.map((status, index) => {
+          const colors = STATUS_COLORS[status];
+          const isHighlighted = index === highlightedIndex;
+          return (
+            <div
+              key={status}
+              onClick={() => handleSelect(status)}
+              onMouseEnter={() => setHighlightedIndex(index)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                cursor: 'pointer',
+                background: isHighlighted ? themeColors.cellHover : 'transparent',
+                transition: 'background 0.1s ease',
+              }}
+            >
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: colors.border,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '11px',
+                  color: colors.text,
+                  fontWeight: 500,
+                }}
+              >
+                {status}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </>,
+    document.body
+  ) : null;
+
   return (
-    <select
-      ref={selectRef}
-      className="status-select"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onFocus={onStartEdit}
-      onBlur={handleBlur}
-      onKeyDown={handleKeyDown}
-      style={{
-        color: colors.text,
-        boxShadow: isEditing ? '0 0 0 2px rgba(99, 102, 241, 0.3)' : 'none',
-        background: isEditing ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-      }}
-    >
-      {STATUSES.map((s) => (
-        <option key={s} value={s}>
-          {s}
-        </option>
-      ))}
-    </select>
+    <>
+      <div
+        ref={buttonRef}
+        tabIndex={0}
+        style={{
+          position: 'relative',
+          outline: 'none',
+        }}
+        onFocus={onStartEdit}
+        onKeyDown={handleKeyDown}
+      >
+        <div
+          onClick={() => setIsOpen(!isOpen)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '4px 8px',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            background: isEditing ? themeColors.inputBg : 'transparent',
+            border: '1px solid transparent',
+            transition: 'all 0.15s ease',
+            boxShadow: isEditing ? `0 0 0 2px ${themeColors.inputShadow}` : 'none',
+          }}
+        >
+          <span
+            style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              background: statusColors.border,
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '11px',
+              color: statusColors.text,
+              fontWeight: 500,
+            }}
+          >
+            {value}
+          </span>
+        </div>
+      </div>
+      {dropdownMenu}
+    </>
   );
 }
 
@@ -1059,22 +1329,65 @@ interface FitSelectProps {
   onEndEdit: () => void;
   onChange: (value: number | null) => void;
   onNavigate: (direction: string) => void;
+  theme: Theme;
+  themeColors: ThemeColors;
 }
 
-function FitSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNavigate }: FitSelectProps) {
-  const selectRef = useRef<HTMLSelectElement>(null);
+function FitSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNavigate, theme, themeColors }: FitSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState<number>(() => {
+    const index = FIT_OPTIONS.indexOf(value);
+    return index === -1 ? 0 : index;
+  });
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLDivElement>(null);
   const isNavigatingRef = useRef(false);
 
   useEffect(() => {
-    if (isEditing && selectRef.current) {
-      selectRef.current.focus();
+    if (isEditing && dropdownRef.current) {
+      dropdownRef.current.focus();
     }
   }, [isEditing]);
+
+  useEffect(() => {
+    if (isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setPosition({
+        top: rect.bottom + 4,
+        left: rect.left
+      });
+      // Reset highlighted index to current value when dropdown opens
+      const index = FIT_OPTIONS.indexOf(value);
+      setHighlightedIndex(index === -1 ? 0 : index);
+    }
+  }, [isOpen, value]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node) &&
+          buttonRef.current && !buttonRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+        if (!isNavigatingRef.current) {
+          onEndEdit();
+        }
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen, onEndEdit]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Tab') {
       e.preventDefault();
       isNavigatingRef.current = true;
+      setIsOpen(false);
       if (e.shiftKey) {
         onNavigate('left');
       } else {
@@ -1082,54 +1395,153 @@ function FitSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNavig
       }
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      isNavigatingRef.current = true;
-      if (e.shiftKey) {
-        onNavigate('up');
+      if (isOpen) {
+        // Select the highlighted option
+        onChange(FIT_OPTIONS[highlightedIndex]);
+        setIsOpen(false);
       } else {
-        onNavigate('down');
+        isNavigatingRef.current = true;
+        setIsOpen(false);
+        if (e.shiftKey) {
+          onNavigate('up');
+        } else {
+          onNavigate('down');
+        }
       }
     } else if (e.key === 'Escape') {
+      setIsOpen(false);
       onEndEdit();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!isOpen) {
+        setIsOpen(true);
+      } else {
+        // Just update highlighted index, don't change the value yet
+        const nextIndex = e.key === 'ArrowDown'
+          ? Math.min(highlightedIndex + 1, FIT_OPTIONS.length - 1)
+          : Math.max(highlightedIndex - 1, 0);
+        setHighlightedIndex(nextIndex);
+      }
     }
   };
 
-  const handleBlur = () => {
-    if (!isNavigatingRef.current) {
-      onEndEdit();
-    }
+  const handleSelect = (fitValue: number | null) => {
+    onChange(fitValue);
+    setIsOpen(false);
     isNavigatingRef.current = false;
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    onChange(val === '' ? null : parseInt(val, 10));
-  };
+  const color = value !== null ? FIT_COLORS[value] : themeColors.textTertiary;
 
-  const color = value !== null ? FIT_COLORS[value] : '#5a5a6a';
+  const dropdownMenu = isOpen && position && typeof window !== 'undefined' ? createPortal(
+    <>
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 999998,
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(false);
+        }}
+      />
+      <div
+        ref={dropdownRef}
+        style={{
+          position: 'fixed',
+          top: `${position.top}px`,
+          left: `${position.left}px`,
+          background: theme === 'dark' ? '#12121a' : '#ffffff',
+          border: `1px solid ${themeColors.border}`,
+          borderRadius: '6px',
+          boxShadow: theme === 'dark' ? '0 8px 24px rgba(0, 0, 0, 0.8)' : '0 8px 24px rgba(0, 0, 0, 0.3)',
+          zIndex: 999999,
+          minWidth: '80px',
+          overflow: 'hidden',
+        }}
+      >
+        {FIT_OPTIONS.map((fitValue, index) => {
+          const optionColor = fitValue !== null ? FIT_COLORS[fitValue] : themeColors.textTertiary;
+          const isHighlighted = index === highlightedIndex;
+          return (
+            <div
+              key={fitValue ?? 'null'}
+              onClick={() => handleSelect(fitValue)}
+              onMouseEnter={() => setHighlightedIndex(index)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '8px 12px',
+                cursor: 'pointer',
+                background: isHighlighted ? themeColors.cellHover : 'transparent',
+                transition: 'background 0.1s ease',
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '11px',
+                  color: optionColor,
+                  fontWeight: 500,
+                }}
+              >
+                {fitValue ?? '—'}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </>,
+    document.body
+  ) : null;
 
   return (
-    <select
-      ref={selectRef}
-      className="status-select"
-      value={value ?? ''}
-      onChange={handleChange}
-      onFocus={onStartEdit}
-      onBlur={handleBlur}
-      onKeyDown={handleKeyDown}
-      style={{
-        color: color,
-        boxShadow: isEditing ? '0 0 0 2px rgba(99, 102, 241, 0.3)' : 'none',
-        background: isEditing ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-        minWidth: '40px',
-      }}
-    >
-      <option value="">—</option>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <option key={n} value={n}>
-          {n}
-        </option>
-      ))}
-    </select>
+    <>
+      <div
+        ref={buttonRef}
+        tabIndex={0}
+        style={{
+          position: 'relative',
+          outline: 'none',
+        }}
+        onFocus={onStartEdit}
+        onKeyDown={handleKeyDown}
+      >
+        <div
+          onClick={() => setIsOpen(!isOpen)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '4px 8px',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            background: isEditing ? themeColors.inputBg : 'transparent',
+            border: '1px solid transparent',
+            transition: 'all 0.15s ease',
+            boxShadow: isEditing ? `0 0 0 2px ${themeColors.inputShadow}` : 'none',
+            minWidth: '40px',
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '11px',
+              color: color,
+              fontWeight: 500,
+            }}
+          >
+            {value ?? '—'}
+          </span>
+        </div>
+      </div>
+      {dropdownMenu}
+    </>
   );
 }
 
@@ -1316,9 +1728,47 @@ const styles: Record<string, React.CSSProperties> = {
   headerRight: {
     display: 'flex',
     alignItems: 'center',
-    gap: '24px',
+    gap: '12px',
+  },
+  themeToggle: {
+    padding: '4px',
+    borderRadius: '14px',
+    cursor: 'pointer',
+    border: 'none',
+    transition: 'background 0.3s ease',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  toggleTrack: {
+    width: '40px',
+    height: '20px',
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  toggleThumb: {
+    width: '20px',
+    height: '20px',
+    borderRadius: '50%',
+    transition: 'transform 0.3s ease, background 0.3s ease',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
   },
   importButton: {
+    background: 'rgba(99, 102, 241, 0.15)',
+    border: '1px solid #6366f1',
+    color: '#818cf8',
+    padding: '8px 16px',
+    borderRadius: '6px',
+    fontSize: '13px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    fontFamily: "'Space Grotesk', sans-serif",
+    transition: 'all 0.15s ease',
+  },
+  exportButton: {
     background: 'rgba(99, 102, 241, 0.15)',
     border: '1px solid #6366f1',
     color: '#818cf8',
