@@ -183,9 +183,6 @@ export default function ExportPage() {
         // Remove all quotes for comparison
         const withoutAnyQuotes = normalized.replace(/"/g, '');
 
-        // Debug: log column names to console
-        console.log('Column:', columnName, '| Normalized:', normalized, '| No quotes:', withoutAnyQuotes);
-
         // Check exact matches first
         if (IGNORED_CSV_COLUMNS.some(ignored =>
           normalized === ignored ||
@@ -206,7 +203,6 @@ export default function ExportPage() {
       };
 
       const filteredColumns = columns.filter(col => !shouldIgnoreColumn(col));
-      console.log('Filtered columns:', filteredColumns);
 
       setCsvColumns(filteredColumns);
       setCsvData(rows);

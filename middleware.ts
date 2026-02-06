@@ -35,8 +35,6 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  console.log('Middleware - Path:', request.nextUrl.pathname, 'User:', user ? user.email : 'none')
-
   // Protected routes that require authentication
   const protectedRoutes = ['/export', '/dashboard']
   const isProtectedRoute = protectedRoutes.some(route =>
@@ -45,13 +43,11 @@ export async function middleware(request: NextRequest) {
 
   // Redirect to login if accessing protected route without auth
   if (isProtectedRoute && !user) {
-    console.log('Redirecting to login - no auth')
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
   // Redirect to dashboard if accessing login while authenticated
   if (request.nextUrl.pathname.startsWith('/login') && user) {
-    console.log('Redirecting to dashboard - already authenticated')
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 

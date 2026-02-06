@@ -6,8 +6,6 @@ export async function GET(request: NextRequest) {
   const supabase = await createServerClient()
   const redirectUrl = new URL('/auth/callback', request.url).toString()
 
-  console.log('Initiating Google OAuth, callback URL:', redirectUrl)
-
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
