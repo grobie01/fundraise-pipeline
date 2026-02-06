@@ -9,7 +9,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const router = useRouter()
-  const supabase = getSupabase()
 
   // Check for error in URL params on mount
   useEffect(() => {
@@ -27,7 +26,7 @@ export default function LoginPage() {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        console.log('Checking session...')
+        const supabase = getSupabase()
         const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
         if (sessionError) {
@@ -37,10 +36,7 @@ export default function LoginPage() {
           return
         }
 
-        console.log('Session:', session ? 'exists' : 'none')
-
         if (session) {
-          console.log('Redirecting to dashboard...')
           // Add a delay to ensure cookies are set
           setTimeout(() => {
             router.push('/dashboard')
@@ -56,10 +52,9 @@ export default function LoginPage() {
     }
 
     checkSession()
-  }, [router, supabase.auth])
+  }, [router])
 
   const handleGoogleLogin = () => {
-    console.log('Redirecting to OAuth API route...')
     setLoading(true)
     window.location.href = '/api/auth/login'
   }
@@ -71,31 +66,31 @@ export default function LoginPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#f9fafb',
+        background: '#0a0a0f',
       }}>
         <div style={{ textAlign: 'center' }}>
           {!error ? (
             <>
               <div style={{
                 border: '3px solid transparent',
-                borderTop: '3px solid #2563eb',
+                borderTop: '3px solid #6366f1',
                 borderRadius: '50%',
                 width: '48px',
                 height: '48px',
                 animation: 'spin 1s linear infinite',
                 margin: '0 auto',
               }} />
-              <p style={{ marginTop: '16px', color: '#6b7280' }}>Checking authentication...</p>
+              <p style={{ marginTop: '16px', color: '#a0a0b0', fontFamily: "'Space Grotesk', sans-serif" }}>Checking authentication...</p>
             </>
           ) : (
             <div style={{ maxWidth: '400px', margin: '0 auto' }}>
               <div style={{
                 padding: '16px',
-                background: '#fef2f2',
-                border: '1px solid #fecaca',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
                 borderRadius: '8px',
               }}>
-                <p style={{ fontSize: '14px', color: '#991b1b' }}>{error}</p>
+                <p style={{ fontSize: '14px', color: '#f87171', margin: 0 }}>{error}</p>
               </div>
               <button
                 onClick={() => {
@@ -105,11 +100,12 @@ export default function LoginPage() {
                 style={{
                   marginTop: '16px',
                   padding: '8px 16px',
-                  color: '#2563eb',
+                  color: '#818cf8',
                   background: 'transparent',
                   border: 'none',
                   cursor: 'pointer',
                   textDecoration: 'underline',
+                  fontFamily: "'Space Grotesk', sans-serif",
                 }}
               >
                 Try again
@@ -132,28 +128,30 @@ export default function LoginPage() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: '#f9fafb',
+      background: '#0a0a0f',
       padding: '16px',
+      fontFamily: "'Space Grotesk', sans-serif",
     }}>
       <div style={{ maxWidth: '400px', width: '100%' }}>
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <h1 style={{
             fontSize: '36px',
             fontWeight: 'bold',
-            color: '#111827',
+            color: '#ffffff',
             marginBottom: '8px',
+            fontFamily: "'JetBrains Mono', monospace",
           }}>
             Fundraise Tracker
           </h1>
-          <p style={{ color: '#6b7280' }}>
+          <p style={{ color: '#a0a0b0' }}>
             Sign in to manage your fundraising pipelines
           </p>
         </div>
 
         <div style={{
-          background: 'white',
+          background: '#12121a',
           borderRadius: '12px',
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+          border: '1px solid #1a1a2a',
           padding: '32px',
         }}>
           <button
@@ -166,28 +164,29 @@ export default function LoginPage() {
               justifyContent: 'center',
               gap: '12px',
               padding: '12px 16px',
-              border: '1px solid #d1d5db',
+              border: '1px solid #2a2a3a',
               borderRadius: '8px',
-              color: '#374151',
-              background: 'white',
+              color: '#ffffff',
+              background: '#0a0a0f',
               cursor: loading ? 'not-allowed' : 'pointer',
               opacity: loading ? 0.5 : 1,
               fontSize: '16px',
               fontWeight: '500',
-              transition: 'background 0.2s',
+              fontFamily: "'Space Grotesk', sans-serif",
+              transition: 'border-color 0.2s',
             }}
             onMouseOver={(e) => {
-              if (!loading) e.currentTarget.style.background = '#f9fafb'
+              if (!loading) e.currentTarget.style.borderColor = '#3a3a4a'
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.background = 'white'
+              e.currentTarget.style.borderColor = '#2a2a3a'
             }}
           >
             {loading ? (
               <>
                 <div style={{
                   border: '2px solid transparent',
-                  borderTop: '2px solid #374151',
+                  borderTop: '2px solid #6366f1',
                   borderRadius: '50%',
                   width: '20px',
                   height: '20px',
@@ -224,11 +223,11 @@ export default function LoginPage() {
             <div style={{
               marginTop: '24px',
               padding: '16px',
-              background: '#fef2f2',
-              border: '1px solid #fecaca',
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
               borderRadius: '8px',
             }}>
-              <p style={{ fontSize: '14px', color: '#991b1b' }}>{error}</p>
+              <p style={{ fontSize: '14px', color: '#f87171', margin: 0 }}>{error}</p>
             </div>
           )}
 
@@ -236,10 +235,10 @@ export default function LoginPage() {
             marginTop: '24px',
             textAlign: 'center',
             fontSize: '14px',
-            color: '#6b7280',
+            color: '#5a5a6a',
           }}>
-            <p>Login required to create and manage pipelines.</p>
-            <p style={{ marginTop: '8px' }}>Shareable links work without login.</p>
+            <p style={{ margin: 0 }}>Login required to create and manage pipelines.</p>
+            <p style={{ marginTop: '8px', margin: '8px 0 0 0' }}>Shareable links work without login.</p>
           </div>
         </div>
       </div>

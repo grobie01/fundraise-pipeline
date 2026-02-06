@@ -8,8 +8,6 @@ export async function GET(request: NextRequest) {
   const code = requestUrl.searchParams.get('code')
   const origin = requestUrl.origin
 
-  console.log('OAuth callback - code:', code ? 'present' : 'missing')
-
   if (code) {
     const cookieStore = await cookies()
 
@@ -37,11 +35,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(error.message)}`)
     }
 
-    console.log('Session created successfully:', data.session ? 'yes' : 'no')
-    console.log('User:', data.session?.user?.email)
   }
 
-  // Redirect to dashboard after successful login
-  console.log('Redirecting to dashboard...')
   return NextResponse.redirect(`${origin}/dashboard`)
 }

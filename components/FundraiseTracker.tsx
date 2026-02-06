@@ -8,7 +8,6 @@ import { toInvestorUI } from '@/lib/types';
 import { Sun, Moon } from 'lucide-react';
 
 const STATUSES: Status[] = ['Lead', 'First Meeting', 'Partner Meeting', 'Term Sheet', 'Passed'];
-const TRADITIONAL_FIELDS = ['name', 'status', 'fit', 'fundSize', 'nextSteps', 'notes', 'amount', 'primaryContact', 'firmContact'];
 
 // Column metadata for traditional mode
 const TRADITIONAL_COLUMNS = [
@@ -168,19 +167,23 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
     return TRADITIONAL_COLUMNS;
   }, [useCustomFields, dynamicColumns]);
 
-  // Initialize column order from database or default order
+  // Initialize column order once on mount from database or default order
+  const initializedRef = useRef(false);
   useEffect(() => {
-    if (initialColumnOrder && initialColumnOrder.length > 0) {
-      setColumnOrder(initialColumnOrder);
-    } else {
-      setColumnOrder(columns.map(col => col.key));
+    if (!initializedRef.current) {
+      if (initialColumnOrder && initialColumnOrder.length > 0) {
+        setColumnOrder(initialColumnOrder);
+      } else {
+        setColumnOrder(columns.map(col => col.key));
+      }
+      initializedRef.current = true;
     }
   }, [initialColumnOrder, columns]);
 
   // Save column order to database when it changes
   const saveColumnOrder = useCallback(async (newOrder: string[]) => {
     try {
-      await fetch(`/api/lists/${listId}`, {
+      await fetch(`/api/lists/${listSlug}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ column_order: newOrder }),
@@ -188,7 +191,7 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
     } catch (error) {
       console.error('Failed to save column order:', error);
     }
-  }, [listId]);
+  }, [listSlug]);
 
   // Rename a column (updates all investors' custom_fields)
   const renameColumn = useCallback(async (oldKey: string, newLabel: string) => {
@@ -253,13 +256,10 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
     return [...ordered, ...newColumns];
   }, [columns, columnOrder]);
 
-  // Use either traditional or dynamic fields (using ordered columns)
+  // Use ordered columns for field navigation (respects drag-drop reordering)
   const FIELDS = useMemo(() => {
-    if (useCustomFields) {
-      return orderedColumns.map(col => col.key);
-    }
-    return TRADITIONAL_FIELDS;
-  }, [useCustomFields, orderedColumns]);
+    return orderedColumns.map(col => col.key);
+  }, [orderedColumns]);
 
 
   // Track which cell is being edited to ignore realtime updates for it
@@ -629,27 +629,6 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
       );
     }
 
-    // Fit column in traditional mode - use FitSelect
-    if (!useCustomFields && fieldKey === 'fit') {
-      return (
-        <td key={fieldKey} style={{ ...styles.cell, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
-          <FitSelect
-            value={investor.fit}
-            isEditing={isEditing}
-            onStartEdit={() => setEditingCell({ id: investor.id, field: fieldKey })}
-            onEndEdit={() => setEditingCell(null)}
-            onChange={(val) => {
-              updateInvestorLocal(investor.id, fieldKey, val);
-              saveInvestor(investor.id, fieldKey, val);
-            }}
-            onNavigate={(dir) => navigateToCell(investor.id, fieldKey, dir)}
-            theme={theme}
-            themeColors={colors}
-          />
-        </td>
-      );
-    }
-
     // Regular editable cell
     const cellStyle = fieldKey === 'name'
       ? { ...styles.cell, fontWeight: 500, color: colors.text }
@@ -965,6 +944,7 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
                         <td style={styles.cellAction}>
                           <button
                             className="delete-btn"
+                            tabIndex={-1}
                             style={styles.deleteButton}
                             onClick={() => deleteInvestor(investor.id)}
                           >
@@ -1100,8 +1080,8 @@ function StatusSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNa
   const statusColors = STATUS_COLORS[value];
 
   useEffect(() => {
-    if (isEditing && dropdownRef.current) {
-      dropdownRef.current.focus();
+    if (isEditing && buttonRef.current) {
+      buttonRef.current.focus();
     }
   }, [isEditing]);
 
@@ -1176,6 +1156,11 @@ function StatusSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNa
           : Math.max(highlightedIndex - 1, 0);
         setHighlightedIndex(nextIndex);
       }
+    } else if (e.key >= '1' && e.key <= '5') {
+      e.preventDefault();
+      const index = parseInt(e.key) - 1;
+      onChange(STATUSES[index]);
+      setIsOpen(false);
     }
   };
 
@@ -1305,238 +1290,6 @@ function StatusSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNa
             }}
           >
             {value}
-          </span>
-        </div>
-      </div>
-      {dropdownMenu}
-    </>
-  );
-}
-
-const FIT_OPTIONS = [null, 1, 2, 3, 4, 5] as const;
-const FIT_COLORS: Record<number, string> = {
-  1: '#ef4444', // red - poor fit
-  2: '#f97316', // orange
-  3: '#eab308', // yellow
-  4: '#22c55e', // green
-  5: '#10b981', // emerald - great fit
-};
-
-interface FitSelectProps {
-  value: number | null;
-  isEditing: boolean;
-  onStartEdit: () => void;
-  onEndEdit: () => void;
-  onChange: (value: number | null) => void;
-  onNavigate: (direction: string) => void;
-  theme: Theme;
-  themeColors: ThemeColors;
-}
-
-function FitSelect({ value, isEditing, onStartEdit, onEndEdit, onChange, onNavigate, theme, themeColors }: FitSelectProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [highlightedIndex, setHighlightedIndex] = useState<number>(() => {
-    const index = FIT_OPTIONS.indexOf(value);
-    return index === -1 ? 0 : index;
-  });
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLDivElement>(null);
-  const isNavigatingRef = useRef(false);
-
-  useEffect(() => {
-    if (isEditing && dropdownRef.current) {
-      dropdownRef.current.focus();
-    }
-  }, [isEditing]);
-
-  useEffect(() => {
-    if (isOpen && buttonRef.current) {
-      const rect = buttonRef.current.getBoundingClientRect();
-      setPosition({
-        top: rect.bottom + 4,
-        left: rect.left
-      });
-      // Reset highlighted index to current value when dropdown opens
-      const index = FIT_OPTIONS.indexOf(value);
-      setHighlightedIndex(index === -1 ? 0 : index);
-    }
-  }, [isOpen, value]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node) &&
-          buttonRef.current && !buttonRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        if (!isNavigatingRef.current) {
-          onEndEdit();
-        }
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen, onEndEdit]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      isNavigatingRef.current = true;
-      setIsOpen(false);
-      if (e.shiftKey) {
-        onNavigate('left');
-      } else {
-        onNavigate('right');
-      }
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (isOpen) {
-        // Select the highlighted option
-        onChange(FIT_OPTIONS[highlightedIndex]);
-        setIsOpen(false);
-      } else {
-        isNavigatingRef.current = true;
-        setIsOpen(false);
-        if (e.shiftKey) {
-          onNavigate('up');
-        } else {
-          onNavigate('down');
-        }
-      }
-    } else if (e.key === 'Escape') {
-      setIsOpen(false);
-      onEndEdit();
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (!isOpen) {
-        setIsOpen(true);
-      } else {
-        // Just update highlighted index, don't change the value yet
-        const nextIndex = e.key === 'ArrowDown'
-          ? Math.min(highlightedIndex + 1, FIT_OPTIONS.length - 1)
-          : Math.max(highlightedIndex - 1, 0);
-        setHighlightedIndex(nextIndex);
-      }
-    }
-  };
-
-  const handleSelect = (fitValue: number | null) => {
-    onChange(fitValue);
-    setIsOpen(false);
-    isNavigatingRef.current = false;
-  };
-
-  const color = value !== null ? FIT_COLORS[value] : themeColors.textTertiary;
-
-  const dropdownMenu = isOpen && position && typeof window !== 'undefined' ? createPortal(
-    <>
-      <div
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 999998,
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen(false);
-        }}
-      />
-      <div
-        ref={dropdownRef}
-        style={{
-          position: 'fixed',
-          top: `${position.top}px`,
-          left: `${position.left}px`,
-          background: theme === 'dark' ? '#12121a' : '#ffffff',
-          border: `1px solid ${themeColors.border}`,
-          borderRadius: '6px',
-          boxShadow: theme === 'dark' ? '0 8px 24px rgba(0, 0, 0, 0.8)' : '0 8px 24px rgba(0, 0, 0, 0.3)',
-          zIndex: 999999,
-          minWidth: '80px',
-          overflow: 'hidden',
-        }}
-      >
-        {FIT_OPTIONS.map((fitValue, index) => {
-          const optionColor = fitValue !== null ? FIT_COLORS[fitValue] : themeColors.textTertiary;
-          const isHighlighted = index === highlightedIndex;
-          return (
-            <div
-              key={fitValue ?? 'null'}
-              onClick={() => handleSelect(fitValue)}
-              onMouseEnter={() => setHighlightedIndex(index)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '8px 12px',
-                cursor: 'pointer',
-                background: isHighlighted ? themeColors.cellHover : 'transparent',
-                transition: 'background 0.1s ease',
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: '11px',
-                  color: optionColor,
-                  fontWeight: 500,
-                }}
-              >
-                {fitValue ?? '—'}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </>,
-    document.body
-  ) : null;
-
-  return (
-    <>
-      <div
-        ref={buttonRef}
-        tabIndex={0}
-        style={{
-          position: 'relative',
-          outline: 'none',
-        }}
-        onFocus={onStartEdit}
-        onKeyDown={handleKeyDown}
-      >
-        <div
-          onClick={() => setIsOpen(!isOpen)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '4px 8px',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            background: isEditing ? themeColors.inputBg : 'transparent',
-            border: '1px solid transparent',
-            transition: 'all 0.15s ease',
-            boxShadow: isEditing ? `0 0 0 2px ${themeColors.inputShadow}` : 'none',
-            minWidth: '40px',
-          }}
-        >
-          <span
-            style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '11px',
-              color: color,
-              fontWeight: 500,
-            }}
-          >
-            {value ?? '—'}
           </span>
         </div>
       </div>
