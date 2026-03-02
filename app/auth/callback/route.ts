@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   const code = requestUrl.searchParams.get('code')
   const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || ''
   const protocol = request.headers.get('x-forwarded-proto') || 'https'
-  const origin = host ? `${protocol}://${host}` : requestUrl.origin
+  const origin = process.env.NEXT_PUBLIC_BASE_URL || (host ? `${protocol}://${host}` : requestUrl.origin)
 
   if (code) {
     const cookieStore = await cookies()
