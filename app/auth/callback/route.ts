@@ -6,7 +6,9 @@ import { cookies } from 'next/headers'
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url)
   const code = requestUrl.searchParams.get('code')
-  const origin = requestUrl.origin
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || ''
+  const protocol = request.headers.get('x-forwarded-proto') || 'https'
+  const origin = host ? `${protocol}://${host}` : requestUrl.origin
 
   if (code) {
     const cookieStore = await cookies()

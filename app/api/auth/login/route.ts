@@ -4,7 +4,10 @@ import type { NextRequest } from 'next/server'
 
 export async function GET(request: NextRequest) {
   const supabase = await createServerClient()
-  const redirectUrl = new URL('/auth/callback', request.url).toString()
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || ''
+  const protocol = request.headers.get('x-forwarded-proto') || 'https'
+  const origin = host ? `${protocol}://${host}` : request.nextUrl.origin
+  const redirectUrl = `${origin}/auth/callback`
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
