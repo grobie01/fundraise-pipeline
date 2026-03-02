@@ -157,7 +157,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || request.nextUrl.origin;
+    const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || ''
+    const protocol = request.headers.get('x-forwarded-proto') || 'https'
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || (host ? `${protocol}://${host}` : request.nextUrl.origin);
 
     return NextResponse.json({
       id: list.id,

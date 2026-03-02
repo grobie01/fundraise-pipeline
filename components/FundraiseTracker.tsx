@@ -405,6 +405,7 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
 
   // Save to API (called on blur/navigation)
   const saveInvestor = async (id: string, field: string, value: string | number | null) => {
+    if (id.startsWith('temp-')) return;
     try {
       // For custom fields mode, save the entire customFields object
       if (useCustomFields && field !== 'status' && field !== 'name') {
@@ -435,46 +436,15 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
   };
 
   const addInvestor = async (status: Status) => {
-    const tempId = `temp-${Date.now()}`;
-
-    // Create appropriate new investor based on mode
-    const newInvestor: InvestorUI = useCustomFields
-      ? {
-          id: tempId,
-          name: '',
-          status,
-          nextSteps: '',
-          notes: '',
-          amount: '',
-          primaryContact: '',
-          firmContact: '',
-          fit: null,
-          fundSize: '',
-          customFields: Object.fromEntries(dynamicColumns.map(col => [col.key, ''])),
-        }
-      : {
-          id: tempId,
-          name: '',
-          status,
-          nextSteps: '',
-          notes: '',
-          amount: '',
-          primaryContact: '',
-          firmContact: '',
-          fit: null,
-          fundSize: '',
-          customFields: {},
-        };
-
-    setInvestors(prev => [...prev, newInvestor]);
-
-    // Start editing the first editable field
     const firstField = useCustomFields ? dynamicColumns[0]?.key : 'name';
-    setEditingCell({ id: tempId, field: firstField });
 
     try {
+      const customFields = useCustomFields
+        ? Object.fromEntries(dynamicColumns.map(col => [col.key, '']))
+        : {};
+
       const requestBody = useCustomFields
-        ? { name: '', status, custom_fields: newInvestor.customFields }
+        ? { name: '', status, custom_fields: customFields }
         : { name: '', status };
 
       const response = await fetch(`/api/lists/${listId}/investors`, {
@@ -485,15 +455,12 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
 
       if (response.ok) {
         const created = await response.json();
-        setInvestors(prev =>
-          prev.map(inv => (inv.id === tempId ? toInvestorUI(created) : inv))
-        );
+        const newInvestor = toInvestorUI(created);
+        setInvestors(prev => [...prev, newInvestor]);
         setEditingCell({ id: created.id, field: firstField });
       }
     } catch (error) {
       console.error('Failed to add investor:', error);
-      setInvestors(prev => prev.filter(inv => inv.id !== tempId));
-      setEditingCell(null);
     }
   };
 
