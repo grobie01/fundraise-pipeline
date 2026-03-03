@@ -447,7 +447,7 @@ export default function FundraiseTracker({ listId, listName, listSlug, initialIn
         ? { name: '', status, custom_fields: customFields }
         : { name: '', status };
 
-      const response = await fetch(`/api/lists/${listId}/investors`, {
+      const response = await fetch(`/api/lists/${listSlug}/investors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
